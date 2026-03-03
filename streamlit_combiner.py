@@ -45,6 +45,17 @@ def detect_version(adintel_df):
     return None, 'Unknown'
 
 
+def detect_adintel_brand_col(adintel_df):
+    """Detect which brand column AdIntel uses (varies by export)."""
+    if 'Brand Core' in adintel_df.columns:
+        return 'Brand Core'
+    elif 'Brand Variant' in adintel_df.columns:
+        return 'Brand Variant'
+    elif 'Brand' in adintel_df.columns:
+        return 'Brand'
+    return None
+
+
 def assign_pathmatics_middle_category(channel):
     ch = str(channel).strip()
     social_platforms = {'Facebook', 'Instagram', 'Snapchat', 'TikTok',
@@ -142,9 +153,10 @@ def process_files(adintel_df, pathmatics_df, version):
         adintel_df.loc[youtube_mask, 'Media Type'] = 'YouTube (Digital Video)'
         youtube_count = youtube_mask.sum()
 
-    # Save Brand Variant before renaming
-    if 'Brand Core' in adintel_df.columns:
-        adintel_df['Brand Variant'] = adintel_df['Brand Core']
+    # Detect brand column and save Brand Variant before renaming
+    adintel_brand_col = detect_adintel_brand_col(adintel_df)
+    if adintel_brand_col:
+        adintel_df['Brand Variant'] = adintel_df[adintel_brand_col]
 
     # ========== PATHMATICS ==========
 
@@ -191,7 +203,7 @@ def process_files(adintel_df, pathmatics_df, version):
     adintel_df['Source'] = 'AdIntel'
     adintel_df['Middle Media Category'] = adintel_df.apply(assign_adintel_middle_category, axis=1)
 
-    rename_map = {'Brand Core': 'Brand Name'}
+    rename_map = {adintel_brand_col: 'Brand Name'} if adintel_brand_col else {}
     if include_impressions:
         if 'ImpE_P18_99' in adintel_df.columns:
             rename_map['ImpE_P18_99'] = 'Estimated Impressions'
@@ -200,7 +212,8 @@ def process_files(adintel_df, pathmatics_df, version):
         else:
             adintel_df['Estimated Impressions'] = 0
 
-    adintel_df.rename(columns=rename_map, inplace=True)
+    if rename_map:
+        adintel_df.rename(columns=rename_map, inplace=True)
 
     # ========== COMBINE ==========
     base_columns = [
@@ -212,6 +225,7 @@ def process_files(adintel_df, pathmatics_df, version):
     if include_impressions:
         base_columns.append('Estimated Impressions')
 
+    # Ensure Brand Variant exists in both
     if 'Brand Variant' not in pathmatics_df.columns:
         pathmatics_df['Brand Variant'] = pathmatics_df.get('Brand Name', 'N/A')
     if 'Brand Variant' not in adintel_df.columns:
@@ -264,7 +278,9 @@ if adintel_file and pathmatics_file:
             if version is None:
                 st.error("❌ Could not detect file format. Make sure Adintel file has 'Week' or 'Month' column.")
             else:
-                st.success(f"✅ Detected format: **{version_display}**")
+                # Detect brand column
+                brand_col = detect_adintel_brand_col(adintel_df)
+                st.success(f"✅ Detected format: **{version_display}** | Brand column: **{brand_col or 'Not found'}**")
 
                 col1, col2 = st.columns(2)
                 with col1:
@@ -325,7 +341,7 @@ else:
 
 st.markdown("---")
 st.markdown("""
-*Methodology v3 — Auto-detects Weekly/Monthly and Impressions formats*
+*Methodology v3 — Auto-detects Weekly/Monthly, Impressions, and Brand column formats*
 | Source | Covers |
 |--------|--------|
 | **AdIntel** | TV, Radio, Print, Outdoor, Digital Display, Digital Video, YouTube |
