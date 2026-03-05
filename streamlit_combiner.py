@@ -1,10 +1,11 @@
 """
-Adintel + Pathmatics Combiner - Streamlit App
+Adintel + Pathmatics + MediaRadar Combiner - Streamlit App
 Deploy to Streamlit Cloud for free: https://streamlit.io/cloud
 
-Methodology v3:
+Methodology v4:
 - AdIntel: Keep ALL data (traditional + digital display/video + YouTube)
 - Pathmatics: Add only Social Media and OTT/CTV (exclude Desktop/Mobile Display/Video and YouTube)
+- MediaRadar: Add only Podcast, Email, and Retail Media (Native) — exclude all other formats
 - AdIntel Streaming: Excluded (Pathmatics OTT has broader coverage)
 - YouTube: Labeled separately as 'YouTube (Digital Video)' from AdIntel distributor data
 
@@ -18,11 +19,33 @@ import pandas as pd
 import io
 from datetime import datetime
 
-st.set_page_config(page_title="Adintel + Pathmatics Combiner", page_icon="📊", layout="wide")
+st.set_page_config(page_title="Adintel + Pathmatics + MediaRadar Combiner", page_icon="📊", layout="wide")
 
 # ========== CHANNELS TO EXCLUDE FROM PATHMATICS ==========
 EXCLUDED_PATHMATICS_CHANNELS = {
     'Desktop Display', 'Desktop Video', 'Mobile Display', 'Mobile Video', 'YouTube'
+}
+
+# ========== MEDIARADAR FORMATS TO INCLUDE ==========
+INCLUDED_MEDIARADAR_FORMATS = {'Podcast', 'Native', 'Email'}
+
+# ========== MEDIARADAR FORMAT REMAPPING ==========
+MEDIARADAR_FORMAT_MAP = {
+    'Podcast': {
+        'Media Type': 'Podcast',
+        'Media Category': 'Audio',
+        'Middle Media Category': 'Audio',
+    },
+    'Native': {
+        'Media Type': 'Retail Media',
+        'Media Category': 'Retail Media',
+        'Middle Media Category': 'Retail Media',
+    },
+    'Email': {
+        'Media Type': 'Email',
+        'Media Category': 'Digital',
+        'Middle Media Category': 'Digital Email',
+    },
 }
 
 
@@ -81,6 +104,9 @@ def assign_adintel_middle_category(row):
         return 'Digital Video'
     elif 'digital' in media_type and 'display' in media_type:
         return 'Digital Display'
+    # Radio → Audio
+    elif 'radio' in media_type:
+        return 'Audio'
     return row.get('Media Category', 'N/A')
 
 
@@ -92,6 +118,7 @@ def group_media_type(media_type):
     clearance_tv = {'Network Clearance Spot TV', 'Syndicated Clearance Spot TV'}
     digital_video = {'National Digital-Video', 'Local Digital-Video', 'YouTube (Digital Video)'}
     digital_display = {'National Digital-Display', 'Local Digital-Display'}
+    audio = {'Network Radio', 'Local Radio', 'Podcast'}
 
     if mt in social:
         return 'Social Media'
@@ -103,6 +130,12 @@ def group_media_type(media_type):
         return 'Digital Video'
     elif mt in digital_display:
         return 'Digital Display'
+    elif mt in audio:
+        return 'Audio'
+    elif mt == 'Email':
+        return 'Digital'
+    elif mt == 'Retail Media':
+        return 'Retail Media'
     return mt
 
 
@@ -126,7 +159,103 @@ def read_pathmatics(uploaded_file):
     return df
 
 
-def process_files(adintel_df, pathmatics_df, version):
+def read_mediaradar(uploaded_file):
+    """Read MediaRadar file with dynamic header detection."""
+    filename = uploaded_file.name
+
+    if filename.endswith('.csv'):
+        # Read all rows to find header
+        raw = pd.read_csv(uploaded_file, header=None)
+    else:
+        raw = pd.read_excel(uploaded_file, sheet_name='Report Builder', header=None)
+
+    # Find the row containing 'Format' to use as header
+    header_row = None
+    for idx, row in raw.iterrows():
+        if row.astype(str).str.strip().str.lower().eq('format').any():
+            header_row = idx
+            break
+
+    if header_row is None:
+        raise ValueError("Could not find 'Format' column in MediaRadar file. Check the file structure.")
+
+    # Re-read with correct header
+    uploaded_file.seek(0)
+    if filename.endswith('.csv'):
+        df = pd.read_csv(uploaded_file, skiprows=header_row)
+    else:
+        df = pd.read_excel(uploaded_file, sheet_name='Report Builder', skiprows=header_row)
+
+    df.columns = df.columns.str.strip()
+    return df
+
+
+def process_mediaradar(mr_df, date_col):
+    """Process MediaRadar data: filter formats, unpivot months, map columns."""
+
+    # Filter to only included formats
+    mr_df['Format'] = mr_df['Format'].str.strip()
+    before = len(mr_df)
+    mr_df = mr_df[mr_df['Format'].isin(INCLUDED_MEDIARADAR_FORMATS)]
+    formats_excluded = before - len(mr_df)
+
+    if mr_df.empty:
+        return pd.DataFrame(), 0, formats_excluded
+
+    # Identify month columns (e.g., 'Jan 2025', 'Feb 2025', ...)
+    non_month_cols = ['Parent', 'Product Line', 'Format', 'Detailed Property',
+                      'Media Property', 'National/Local', 'Market']
+    month_cols = [c for c in mr_df.columns if c not in non_month_cols]
+
+    # Unpivot monthly spend columns into rows
+    mr_melted = mr_df.melt(
+        id_vars=[c for c in non_month_cols if c in mr_df.columns],
+        value_vars=month_cols,
+        var_name='Month_Raw',
+        value_name='Dollars'
+    )
+
+    # Drop rows with no spend
+    mr_melted['Dollars'] = pd.to_numeric(mr_melted['Dollars'].astype(str).str.replace(
+        r'[\$,]', '', regex=True), errors='coerce')
+    mr_melted = mr_melted.dropna(subset=['Dollars'])
+    mr_melted = mr_melted[mr_melted['Dollars'] != 0]
+
+    if mr_melted.empty:
+        return pd.DataFrame(), 0, formats_excluded
+
+    # Parse month to datetime (first of month)
+    mr_melted[date_col] = pd.to_datetime(mr_melted['Month_Raw'], format='%b %Y', errors='coerce')
+    if mr_melted[date_col].isna().all():
+        # Try alternate format
+        mr_melted[date_col] = pd.to_datetime(mr_melted['Month_Raw'], errors='coerce')
+
+    # Map format to media type, media category, middle media category
+    mr_melted['Media Type'] = mr_melted['Format'].map(
+        lambda x: MEDIARADAR_FORMAT_MAP.get(x, {}).get('Media Type', x))
+    mr_melted['Media Category'] = mr_melted['Format'].map(
+        lambda x: MEDIARADAR_FORMAT_MAP.get(x, {}).get('Media Category', 'N/A'))
+    mr_melted['Middle Media Category'] = mr_melted['Format'].map(
+        lambda x: MEDIARADAR_FORMAT_MAP.get(x, {}).get('Middle Media Category', 'N/A'))
+
+    # Map columns to combined schema
+    mr_melted['Source'] = 'MediaRadar'
+    mr_melted['Subsidiary'] = mr_melted.get('Parent', 'N/A')
+    mr_melted['Brand Variant'] = mr_melted.get('Product Line', 'N/A')
+    mr_melted['Distributor'] = mr_melted.get('Detailed Property', 'N/A')
+    mr_melted['Distributor Description'] = mr_melted.get('Media Property', 'N/A')
+    mr_melted['Market'] = mr_melted.get('Market', 'N/A')
+    mr_melted['Daypart'] = 'N/A'
+    mr_melted['Commercial Duration'] = 'N/A'
+    mr_melted['Estimated Impressions'] = 0
+
+    # Parent column
+    mr_melted['Parent'] = mr_melted.get('Parent', 'N/A')
+
+    return mr_melted, len(mr_melted), formats_excluded
+
+
+def process_files(adintel_df, pathmatics_df, version, mr_df=None):
     is_weekly = 'weekly' in version
     include_impressions = 'impressions' in version
     date_col = 'Date' if is_weekly else 'Month'
@@ -158,6 +287,9 @@ def process_files(adintel_df, pathmatics_df, version):
     if adintel_brand_col:
         adintel_df['Brand Variant'] = adintel_df[adintel_brand_col]
 
+    # Detect if AdIntel has Parent column
+    has_adintel_parent = 'Parent' in adintel_df.columns
+
     # ========== PATHMATICS ==========
 
     # Exclude channels covered by AdIntel
@@ -165,9 +297,19 @@ def process_files(adintel_df, pathmatics_df, version):
     pathmatics_df = pathmatics_df[~pathmatics_df['Channel'].str.strip().isin(EXCLUDED_PATHMATICS_CHANNELS)]
     channels_removed = before_filter - len(pathmatics_df)
 
-    # Save Brand Variant before renaming
-    if 'Brand Root' in pathmatics_df.columns:
+    # Save Brand Variant from Brand Leaf (or fall back to Brand Root)
+    if 'Brand Leaf' in pathmatics_df.columns:
+        pathmatics_df['Brand Variant'] = pathmatics_df['Brand Leaf']
+    elif 'Brand Root' in pathmatics_df.columns:
         pathmatics_df['Brand Variant'] = pathmatics_df['Brand Root']
+
+    # Subsidiary = Brand Root for Pathmatics
+    if 'Brand Root' in pathmatics_df.columns:
+        pathmatics_df['Subsidiary'] = pathmatics_df['Brand Root']
+
+    # Parent = Advertiser for Pathmatics
+    if 'Advertiser' in pathmatics_df.columns:
+        pathmatics_df['Parent'] = pathmatics_df['Advertiser']
 
     pathmatics_df['Date'] = pd.to_datetime(pathmatics_df['Date'], errors='coerce')
 
@@ -189,12 +331,10 @@ def process_files(adintel_df, pathmatics_df, version):
     pathmatics_df['Middle Media Category'] = pathmatics_df['Channel'].apply(assign_pathmatics_middle_category)
 
     pathmatics_df.rename(columns={
-        'Brand Root': 'Brand Name',
         'Channel': 'Media Type',
         'Duration': 'Commercial Duration',
         'Publisher': 'Distributor',
         'Spend (USD)': 'Dollars',
-        'Advertiser': 'Subsidiary',
         'Impressions': 'Estimated Impressions',
         'Date': date_col,
     }, inplace=True)
@@ -203,7 +343,7 @@ def process_files(adintel_df, pathmatics_df, version):
     adintel_df['Source'] = 'AdIntel'
     adintel_df['Middle Media Category'] = adintel_df.apply(assign_adintel_middle_category, axis=1)
 
-    rename_map = {adintel_brand_col: 'Brand Name'} if adintel_brand_col else {}
+    rename_map = {}
     if include_impressions:
         if 'ImpE_P18_99' in adintel_df.columns:
             rename_map['ImpE_P18_99'] = 'Estimated Impressions'
@@ -215,27 +355,49 @@ def process_files(adintel_df, pathmatics_df, version):
     if rename_map:
         adintel_df.rename(columns=rename_map, inplace=True)
 
-    # ========== COMBINE ==========
+    # ========== DETERMINE IF PARENT COLUMN NEEDED ==========
+    include_parent = has_adintel_parent or (mr_df is not None)
+
+    # ========== BUILD COLUMN LIST ==========
     base_columns = [
-        'Source', 'Subsidiary', 'Brand Name', 'Brand Variant', 'Distributor',
+        'Source', 'Subsidiary', 'Brand Variant', 'Distributor',
         'Distributor Description', 'Media Type', 'Media Category',
         'Middle Media Category', 'Market', 'Daypart',
         'Commercial Duration', date_col, 'Dollars'
     ]
+    if include_parent:
+        base_columns.insert(1, 'Parent')
     if include_impressions:
         base_columns.append('Estimated Impressions')
 
-    # Ensure Brand Variant exists in both
-    if 'Brand Variant' not in pathmatics_df.columns:
-        pathmatics_df['Brand Variant'] = pathmatics_df.get('Brand Name', 'N/A')
-    if 'Brand Variant' not in adintel_df.columns:
-        adintel_df['Brand Variant'] = adintel_df.get('Brand Name', 'N/A')
+    # ========== ENSURE COLUMNS EXIST ==========
+    for df_name, df in [('adintel', adintel_df), ('pathmatics', pathmatics_df)]:
+        if 'Brand Variant' not in df.columns:
+            df['Brand Variant'] = 'N/A'
+        if include_parent and 'Parent' not in df.columns:
+            df['Parent'] = 'N/A'
+        if 'Estimated Impressions' not in df.columns:
+            df['Estimated Impressions'] = 0
 
     pathmatics_selected = pathmatics_df[base_columns]
     adintel_selected = adintel_df[base_columns]
     adintel_selected = adintel_selected.rename(columns={'Dollars ': 'Dollars'})
 
-    combined_df = pd.concat([pathmatics_selected, adintel_selected], ignore_index=True)
+    frames = [pathmatics_selected, adintel_selected]
+
+    # ========== PROCESS MEDIARADAR IF PROVIDED ==========
+    mr_count = 0
+    mr_formats_excluded = 0
+    if mr_df is not None:
+        mr_processed, mr_count, mr_formats_excluded = process_mediaradar(mr_df, date_col)
+        if not mr_processed.empty:
+            # Ensure all required columns exist
+            for col in base_columns:
+                if col not in mr_processed.columns:
+                    mr_processed[col] = 'N/A'
+            frames.append(mr_processed[base_columns])
+
+    combined_df = pd.concat(frames, ignore_index=True)
 
     for col in combined_df.columns:
         if col != date_col:
@@ -243,22 +405,23 @@ def process_files(adintel_df, pathmatics_df, version):
 
     combined_df['Media Type Grouped'] = combined_df['Media Type'].apply(group_media_type)
 
-    return combined_df, len(pathmatics_selected), len(adintel_selected), streaming_removed, channels_removed, youtube_count
+    return combined_df, len(pathmatics_selected), len(adintel_selected), streaming_removed, channels_removed, youtube_count, mr_count, mr_formats_excluded
 
 
 # ========== STREAMLIT UI ==========
 
-st.title("📊 Adintel + Pathmatics Combiner")
+st.title("📊 Adintel + Pathmatics + MediaRadar Combiner")
 st.markdown("""
-Upload your Adintel and Pathmatics files to automatically combine them.
+Upload your files to automatically combine them.
 
-**Methodology v3:**
+**Methodology v4:**
 - **AdIntel** → All traditional media + digital display/video + YouTube
 - **Pathmatics** → Social media (FB, IG, TikTok, etc.) + OTT/CTV only
+- **MediaRadar** *(optional)* → Podcast, Email, Retail Media (Native) only
 - No overlap between sources
 """)
 
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 
 with col1:
     st.subheader("Adintel File")
@@ -268,6 +431,10 @@ with col2:
     st.subheader("Pathmatics File")
     pathmatics_file = st.file_uploader("Upload Pathmatics file", type=['csv', 'xlsx'], key='pathmatics')
 
+with col3:
+    st.subheader("MediaRadar File (Optional)")
+    mediaradar_file = st.file_uploader("Upload MediaRadar file", type=['csv', 'xlsx'], key='mediaradar')
+
 if adintel_file and pathmatics_file:
     with st.spinner("Reading files..."):
         try:
@@ -275,42 +442,62 @@ if adintel_file and pathmatics_file:
             pathmatics_df = read_pathmatics(pathmatics_file)
             version, version_display = detect_version(adintel_df)
 
+            mr_df = None
+            if mediaradar_file:
+                mr_df = read_mediaradar(mediaradar_file)
+
             if version is None:
                 st.error("❌ Could not detect file format. Make sure Adintel file has 'Week' or 'Month' column.")
             else:
-                # Detect brand column
                 brand_col = detect_adintel_brand_col(adintel_df)
-                st.success(f"✅ Detected format: **{version_display}** | Brand column: **{brand_col or 'Not found'}**")
+                has_parent = 'Parent' in adintel_df.columns
+                status = f"✅ Detected format: **{version_display}** | Brand column: **{brand_col or 'Not found'}**"
+                if has_parent:
+                    status += " | Parent column: **detected**"
+                st.success(status)
 
-                col1, col2 = st.columns(2)
-                with col1:
+                cols = st.columns(3 if mr_df is not None else 2)
+                with cols[0]:
                     st.metric("Adintel Rows", f"{len(adintel_df):,}")
-                with col2:
+                with cols[1]:
                     st.metric("Pathmatics Rows", f"{len(pathmatics_df):,}")
+                if mr_df is not None:
+                    with cols[2]:
+                        st.metric("MediaRadar Rows", f"{len(mr_df):,}")
 
                 if st.button("🚀 Process & Combine", type="primary"):
                     with st.spinner("Processing..."):
                         start_time = datetime.now()
-                        combined_df, path_count, adin_count, streaming_rm, channels_rm, yt_count = process_files(
-                            adintel_df.copy(), pathmatics_df.copy(), version
+                        combined_df, path_count, adin_count, streaming_rm, channels_rm, yt_count, mr_count, mr_fmt_excl = process_files(
+                            adintel_df.copy(), pathmatics_df.copy(), version,
+                            mr_df=mr_df.copy() if mr_df is not None else None
                         )
                         elapsed = (datetime.now() - start_time).total_seconds()
 
                     st.success(f"✅ Processing complete in {elapsed:.1f} seconds!")
 
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("Pathmatics Rows (Social + OTT)", f"{path_count:,}")
-                    with col2:
-                        st.metric("Adintel Rows (All media)", f"{adin_count:,}")
-                    with col3:
-                        st.metric("Combined Total", f"{len(combined_df):,}")
+                    result_cols = st.columns(4 if mr_df is not None else 3)
+                    with result_cols[0]:
+                        st.metric("Pathmatics (Social + OTT)", f"{path_count:,}")
+                    with result_cols[1]:
+                        st.metric("AdIntel (All media)", f"{adin_count:,}")
+                    if mr_df is not None:
+                        with result_cols[2]:
+                            st.metric("MediaRadar (Podcast/Email/Retail)", f"{mr_count:,}")
+                        with result_cols[3]:
+                            st.metric("Combined Total", f"{len(combined_df):,}")
+                    else:
+                        with result_cols[2]:
+                            st.metric("Combined Total", f"{len(combined_df):,}")
 
                     with st.expander("📋 Processing Details"):
                         st.write(f"**AdIntel Streaming rows removed:** {streaming_rm:,} (covered by Pathmatics OTT)")
                         st.write(f"**AdIntel YouTube rows relabeled:** {yt_count:,} → 'YouTube (Digital Video)'")
                         st.write(f"**Pathmatics rows excluded:** {channels_rm:,} (Desktop/Mobile Display/Video + YouTube)")
                         st.write("**Pathmatics channels kept:** Social platforms + OTT/CTV")
+                        if mr_df is not None:
+                            st.write(f"**MediaRadar rows included:** {mr_count:,} (Podcast + Email + Retail Media)")
+                            st.write(f"**MediaRadar rows excluded:** {mr_fmt_excl:,} (formats already covered by AdIntel/Pathmatics)")
 
                     with st.expander("📊 Media Type Breakdown"):
                         source_summary = combined_df.groupby(['Source', 'Media Type Grouped'])['Dollars'].sum().reset_index()
@@ -337,13 +524,14 @@ if adintel_file and pathmatics_file:
             st.error(f"❌ Error processing files: {str(e)}")
             st.exception(e)
 else:
-    st.info("👆 Please upload both files to begin.")
+    st.info("👆 Please upload Adintel and Pathmatics files to begin. MediaRadar is optional.")
 
 st.markdown("---")
 st.markdown("""
-*Methodology v3 — Auto-detects Weekly/Monthly, Impressions, and Brand column formats*
+*Methodology v4 — Auto-detects Weekly/Monthly, Impressions, Brand column, and Parent column*
 | Source | Covers |
 |--------|--------|
-| **AdIntel** | TV, Radio, Print, Outdoor, Digital Display, Digital Video, YouTube |
+| **AdIntel** | TV, Radio → Audio, Print, Outdoor, Digital Display, Digital Video, YouTube |
 | **Pathmatics** | Social Media (FB, IG, TikTok, Snap, X, LinkedIn, Pinterest, Reddit) + OTT/CTV |
+| **MediaRadar** | Podcast → Audio, Email → Digital, Retail Media (Sponsored Shopping) |
 """)
