@@ -477,7 +477,51 @@ Upload your files to automatically combine them.
 - **MediaRadar** *(optional)* → Podcast, Email, Retail Media (Native) only
 - No overlap between sources
 """)
+with st.expander("📖 Column Requirements by Source"):
+    st.markdown("""
+    ### Mandatory Columns
 
+    | Output Column | AdIntel | Pathmatics | MediaRadar |
+    |---|---|---|---|
+    | Subsidiary | `Subsidiary` | `Brand Root` | `Parent` |
+    | Brand Variant | `Brand Core` or `Brand Variant` | `Brand Leaf` | `Product Line` |
+    | Distributor | `Distributor` | `Publisher` | `Detailed Property` |
+    | Distributor Description | `Distributor Description` | — (N/A) | `Media Property` |
+    | Media Type | `Media Type` | `Channel` | `Format` |
+    | Media Category | `Media Category` | — (auto: Digital) | — (auto-mapped) |
+    | Market | `Market` | — (auto: NATIONAL) | `Market` |
+    | Daypart | `Daypart` | — (N/A) | — (N/A) |
+    | Commercial Duration | `Commercial Duration` | `Duration` | — (N/A) |
+    | Date | `Month` or `Week` | `Date` | Month columns (e.g., `Jan 2025`) |
+    | Dollars | `Dollars` | `Spend (USD)` | Month columns (unpivoted) |
+
+    ### Conditional Columns (appear when detected)
+
+    | Output Column | AdIntel | Pathmatics | MediaRadar |
+    |---|---|---|---|
+    | Parent | `Parent` | `Advertiser` | `Parent` |
+    | Estimated Impressions | `ImpE_P18_99` or `IMP_P2_99` | `Impressions` | — (N/A) |
+
+    ### Optional Columns (appear when detected in any source)
+
+    | Output Column | AdIntel | Pathmatics | MediaRadar |
+    |---|---|---|---|
+    | Landing Page | `Landing Page URL` | `Landing Page` | — |
+    | Buy Type | `Buy Type` | `Ad Buy Type` | — |
+    | Device (Adintel) | `Device` | — | — |
+    | Delivery Platform (Adintel) | `Delivery Platform` | — | — |
+    | Placement (Pathmatics) | — | `Placement` | — |
+
+    ### Auto-Generated Columns
+
+    | Column | Description |
+    |---|---|
+    | Source | `AdIntel`, `Pathmatics`, or `MediaRadar` |
+    | Middle Media Category | Mid-level grouping (Digital Video, Digital Display, Digital Social, OTT, Audio, etc.) |
+    | Media Type Grouped | Top-level grouping (Digital Video, Social Media, Audio, Retail Media, etc.) |
+
+    *MediaRadar is optional. Columns marked "—" are filled as N/A.*
+    """)
 col1, col2, col3 = st.columns(3)
 
 with col1:
