@@ -50,9 +50,11 @@ MEDIARADAR_FORMAT_MAP = {
 
 # ========== OPTIONAL COLUMN DETECTION ==========
 # (output_name, adintel_source, pathmatics_source, mediaradar_source)
+# Daypart is now optional — only included when detected in AdIntel
 OPTIONAL_COLUMNS = [
     ('Landing Page', 'Landing Page URL', 'Landing Page', None),
     ('Buy Type', 'Buy Type', 'Ad Buy Type', None),
+    ('Daypart', 'Daypart', None, None),
     ('Device (Adintel)', 'Device', None, None),
     ('Delivery Platform (Adintel)', 'Delivery Platform', None, None),
     ('Placement (Pathmatics)', None, 'Placement', None),
@@ -282,12 +284,11 @@ def process_mediaradar(mr_df, date_col, detected_optionals):
     mr_melted['Distributor'] = mr_melted.get('Detailed Property', 'N/A')
     mr_melted['Distributor Description'] = mr_melted.get('Media Property', 'N/A')
     mr_melted['Market'] = mr_melted.get('Market', 'N/A')
-    mr_melted['Daypart'] = 'N/A'
     mr_melted['Commercial Duration'] = 'N/A'
     mr_melted['Estimated Impressions'] = 0
     mr_melted['Parent'] = mr_melted.get('Parent', 'N/A')
 
-    # Map optional columns (all N/A for MediaRadar)
+    # Map optional columns (handles Daypart → 'N/A' automatically if detected elsewhere)
     mr_melted = map_optional_columns(mr_melted, 'MediaRadar', detected_optionals)
 
     return mr_melted, len(mr_melted), formats_excluded
@@ -331,7 +332,7 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
     # Detect Parent
     has_adintel_parent = 'Parent' in adintel_df.columns
 
-    # Map optional columns for AdIntel
+    # Map optional columns for AdIntel (includes Daypart if detected)
     adintel_df = map_optional_columns(adintel_df, 'AdIntel', detected_optionals)
 
     # ========== PATHMATICS ==========
@@ -355,7 +356,7 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
     if 'Advertiser' in pathmatics_df.columns:
         pathmatics_df['Parent'] = pathmatics_df['Advertiser']
 
-    # Map optional columns for Pathmatics
+    # Map optional columns for Pathmatics (Daypart → 'N/A' automatically if detected)
     pathmatics_df = map_optional_columns(pathmatics_df, 'Pathmatics', detected_optionals)
 
     pathmatics_df['Date'] = pd.to_datetime(pathmatics_df['Date'], errors='coerce')
@@ -367,7 +368,6 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
     pathmatics_df['Media Category'] = 'Digital'
     pathmatics_df['Market'] = 'NATIONAL'
     pathmatics_df['Source'] = 'Pathmatics'
-    pathmatics_df['Daypart'] = 'N/A'
     pathmatics_df['Distributor Description'] = 'N/A'
     pathmatics_df['Duration'] = pathmatics_df['Duration'].fillna('N/A')
 
@@ -408,13 +408,14 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
     base_columns = [
         'Source', 'Subsidiary', 'Brand Variant', 'Distributor',
         'Distributor Description', 'Media Type', 'Media Category',
-        'Middle Media Category', 'Market', 'Daypart',
+        'Middle Media Category', 'Market',
         'Commercial Duration',
     ]
     if include_parent:
         base_columns.insert(1, 'Parent')
 
     # Insert optional columns before date column
+    # (Daypart included here only if detected in AdIntel)
     for opt_col in detected_optionals:
         base_columns.append(opt_col)
 
@@ -490,7 +491,6 @@ with st.expander("📖 Column Requirements by Source"):
     | Media Type | `Media Type` | `Channel` | `Format` |
     | Media Category | `Media Category` | — (auto: Digital) | — (auto-mapped) |
     | Market | `Market` | — (auto: NATIONAL) | `Market` |
-    | Daypart | `Daypart` | — (N/A) | — (N/A) |
     | Commercial Duration | `Commercial Duration` | `Duration` | — (N/A) |
     | Date | `Month` or `Week` | `Date` | Month columns (e.g., `Jan 2025`) |
     | Dollars | `Dollars` | `Spend (USD)` | Month columns (unpivoted) |
@@ -508,6 +508,7 @@ with st.expander("📖 Column Requirements by Source"):
     |---|---|---|---|
     | Landing Page | `Landing Page URL` | `Landing Page` | — |
     | Buy Type | `Buy Type` | `Ad Buy Type` | — |
+    | Daypart | `Daypart` | — (N/A) | — (N/A) |
     | Device (Adintel) | `Device` | — | — |
     | Delivery Platform (Adintel) | `Delivery Platform` | — | — |
     | Placement (Pathmatics) | — | `Placement` | — |
@@ -638,7 +639,7 @@ st.markdown("""
 *Methodology v4 — Auto-detects Weekly/Monthly, Impressions, Brand column, Parent column, and optional digital columns*
 | Source | Covers | Optional Columns |
 |--------|--------|-----------------|
-| **AdIntel** | TV, Radio → Audio, Print, Outdoor, Digital Display, Digital Video, YouTube | Landing Page, Buy Type, Device, Delivery Platform |
+| **AdIntel** | TV, Radio → Audio, Print, Outdoor, Digital Display, Digital Video, YouTube | Landing Page, Buy Type, Daypart, Device, Delivery Platform |
 | **Pathmatics** | Social Media (FB, IG, TikTok, Snap, X, LinkedIn, Pinterest, Reddit) + OTT/CTV | Landing Page, Buy Type, Placement |
 | **MediaRadar** | Podcast → Audio, Email → Digital, Retail Media (Sponsored Shopping) | — |
 """)
