@@ -3,10 +3,11 @@ Adintel + Pathmatics + MediaRadar Combiner - Streamlit App
 Deploy to Streamlit Cloud for free: https://streamlit.io/cloud
 
 Methodology v4:
-- AdIntel: Keep ALL data (traditional + digital display/video + YouTube)
+- AdIntel: Keep ALL data (traditional + digital display/video + YouTube) EXCEPT Twitch.tv (covered by Pathmatics)
 - Pathmatics: Add only Social Media and OTT/CTV (exclude Desktop/Mobile Display/Video and YouTube)
 - MediaRadar: Add only Podcast, Email, and Retail Media (Native) — exclude all other formats
 - AdIntel Streaming: Excluded (Pathmatics OTT has broader coverage)
+- AdIntel Twitch.tv: Excluded (Pathmatics Publisher data used instead)
 - YouTube: Labeled separately as 'YouTube (Digital Video)' from AdIntel distributor data
 
 To run locally:
@@ -288,7 +289,7 @@ def process_mediaradar(mr_df, date_col, detected_optionals):
     mr_melted['Estimated Impressions'] = 0
     mr_melted['Parent'] = mr_melted.get('Parent', 'N/A')
 
-    # Map optional columns (handles Daypart → 'N/A' automatically if detected elsewhere)
+    # Map optional columns (handles Daypart -> 'N/A' automatically if detected elsewhere)
     mr_melted = map_optional_columns(mr_melted, 'MediaRadar', detected_optionals)
 
     return mr_melted, len(mr_melted), formats_excluded
@@ -316,6 +317,13 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
         before = len(adintel_df)
         adintel_df = adintel_df[adintel_df['Media Category'].str.strip().str.lower() != 'streaming']
         streaming_removed = before - len(adintel_df)
+
+    # Filter out Twitch.tv from AdIntel (Pathmatics Publisher data used instead)
+    twitch_removed = 0
+    if 'Distributor' in adintel_df.columns:
+        before = len(adintel_df)
+        adintel_df = adintel_df[adintel_df['Distributor'].str.strip().str.upper() != 'TWITCH.TV']
+        twitch_removed = before - len(adintel_df)
 
     # Label YouTube distributors separately
     youtube_count = 0
@@ -356,7 +364,7 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
     if 'Advertiser' in pathmatics_df.columns:
         pathmatics_df['Parent'] = pathmatics_df['Advertiser']
 
-    # Map optional columns for Pathmatics (Daypart → 'N/A' automatically if detected)
+    # Map optional columns for Pathmatics (Daypart -> 'N/A' automatically if detected)
     pathmatics_df = map_optional_columns(pathmatics_df, 'Pathmatics', detected_optionals)
 
     pathmatics_df['Date'] = pd.to_datetime(pathmatics_df['Date'], errors='coerce')
@@ -463,7 +471,11 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
 
     combined_df['Media Type Grouped'] = combined_df['Media Type'].apply(group_media_type)
 
-    return combined_df, len(pathmatics_selected), len(adintel_selected), streaming_removed, channels_removed, youtube_count, mr_count, mr_formats_excluded, detected_optionals
+    return (
+        combined_df, len(pathmatics_selected), len(adintel_selected),
+        streaming_removed, channels_removed, youtube_count,
+        mr_count, mr_formats_excluded, detected_optionals, twitch_removed
+    )
 
 
 # ========== STREAMLIT UI ==========
@@ -473,8 +485,8 @@ st.markdown("""
 Upload your files to automatically combine them.
 
 **Methodology v4:**
-- **AdIntel** → All traditional media + digital display/video + YouTube
-- **Pathmatics** → Social media (FB, IG, TikTok, etc.) + OTT/CTV only
+- **AdIntel** → All traditional media + digital display/video + YouTube *(Twitch.tv excluded — use Pathmatics)*
+- **Pathmatics** → Social media (FB, IG, TikTok, etc.) + OTT/CTV + Twitch only
 - **MediaRadar** *(optional)* → Podcast, Email, Retail Media (Native) only
 - No overlap between sources
 """)
@@ -549,7 +561,7 @@ if adintel_file and pathmatics_file:
                 mr_df = read_mediaradar(mediaradar_file)
 
             if version is None:
-                st.error("❌ Could not detect file format. Make sure Adintel file has 'Week' or 'Month' column.")
+                st.error("Could not detect file format. Make sure Adintel file has 'Week' or 'Month' column.")
             else:
                 brand_col = detect_adintel_brand_col(adintel_df)
                 has_parent = 'Parent' in adintel_df.columns
@@ -574,7 +586,11 @@ if adintel_file and pathmatics_file:
                 if st.button("🚀 Process & Combine", type="primary"):
                     with st.spinner("Processing..."):
                         start_time = datetime.now()
-                        combined_df, path_count, adin_count, streaming_rm, channels_rm, yt_count, mr_count, mr_fmt_excl, detected_opts = process_files(
+                        (
+                            combined_df, path_count, adin_count,
+                            streaming_rm, channels_rm, yt_count,
+                            mr_count, mr_fmt_excl, detected_opts, twitch_rm
+                        ) = process_files(
                             adintel_df.copy(), pathmatics_df.copy(), version,
                             mr_df=mr_df.copy() if mr_df is not None else None
                         )
@@ -598,9 +614,10 @@ if adintel_file and pathmatics_file:
 
                     with st.expander("📋 Processing Details"):
                         st.write(f"**AdIntel Streaming rows removed:** {streaming_rm:,} (covered by Pathmatics OTT)")
+                        st.write(f"**AdIntel Twitch.tv rows removed:** {twitch_rm:,} (covered by Pathmatics Publisher)")
                         st.write(f"**AdIntel YouTube rows relabeled:** {yt_count:,} → 'YouTube (Digital Video)'")
                         st.write(f"**Pathmatics rows excluded:** {channels_rm:,} (Desktop/Mobile Display/Video + YouTube)")
-                        st.write("**Pathmatics channels kept:** Social platforms + OTT/CTV")
+                        st.write("**Pathmatics channels kept:** Social platforms + OTT/CTV + Twitch")
                         if mr_df is not None:
                             st.write(f"**MediaRadar rows included:** {mr_count:,} (Podcast + Email + Retail Media)")
                             st.write(f"**MediaRadar rows excluded:** {mr_fmt_excl:,} (formats already covered by AdIntel/Pathmatics)")
@@ -639,7 +656,7 @@ st.markdown("""
 *Methodology v4 — Auto-detects Weekly/Monthly, Impressions, Brand column, Parent column, and optional digital columns*
 | Source | Covers | Optional Columns |
 |--------|--------|-----------------|
-| **AdIntel** | TV, Radio → Audio, Print, Outdoor, Digital Display, Digital Video, YouTube | Landing Page, Buy Type, Daypart, Device, Delivery Platform |
-| **Pathmatics** | Social Media (FB, IG, TikTok, Snap, X, LinkedIn, Pinterest, Reddit) + OTT/CTV | Landing Page, Buy Type, Placement |
+| **AdIntel** | TV, Radio, Print, Outdoor, Digital Display, Digital Video, YouTube *(Twitch.tv excluded)* | Landing Page, Buy Type, Daypart, Device, Delivery Platform |
+| **Pathmatics** | Social Media (FB, IG, TikTok, Snap, X, LinkedIn, Pinterest, Reddit) + OTT/CTV + Twitch | Landing Page, Buy Type, Placement |
 | **MediaRadar** | Podcast → Audio, Email → Digital, Retail Media (Sponsored Shopping) | — |
 """)
