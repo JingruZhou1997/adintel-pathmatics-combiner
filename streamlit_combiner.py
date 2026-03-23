@@ -59,6 +59,8 @@ OPTIONAL_COLUMNS = [
     ('Device (Adintel)', 'Device', None, None),
     ('Delivery Platform (Adintel)', 'Delivery Platform', None, None),
     ('Placement (Pathmatics)', None, 'Placement', None),
+    ('Program Name', 'Program Name', None, None),   # ← ADD
+    ('Program Genre', 'Program Genre', None, None),  # ← ADD
 ]
 
 
