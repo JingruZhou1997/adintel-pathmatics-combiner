@@ -690,14 +690,15 @@ with st.expander("📖 Column Requirements by Source"):
     | Output Column | AdIntel Source Column |
     |---|---|
     | Clicks | `Clicks` |
-    | CPC | `CPC` |
-    | CTR | `CTR` |
+    | CPC | `CPC` / `CPC (x.xx)` |
+    | CTR | `CTR` / `CTR (x.xxx)` |
     | Ad Visibility | `Ad Visibility` |
     | Advertiser Domain | `Advertiser Domain` |
     | Advertiser Search Category | `Advertiser Search Category` |
     | Avg Rank | `Avg Rank` |
     | Search Keyword | `Search Keyword` |
     | Search Keyword Group | `Search Keyword Group` |
+    | Occurrence Indicator | `Occurrence Indicator` |
 
     ### Auto-Generated Columns
 
