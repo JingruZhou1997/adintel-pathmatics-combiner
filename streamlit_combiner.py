@@ -277,7 +277,7 @@ def group_media_type(media_type):
     elif mt in audio:
         return 'Audio'
     elif mt == 'Email':
-        return 'Digital'
+        return 'Digital Email'
     elif mt == 'Retail Media':
         return 'Retail Media'
     return mt
