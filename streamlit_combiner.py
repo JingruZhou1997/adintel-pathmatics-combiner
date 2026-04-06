@@ -260,7 +260,7 @@ def group_media_type(media_type):
     digital_video = {'National Digital-Video', 'Local Digital-Video', 'Desktop Video', 'Mobile Video'}
     digital_display = {'National Digital-Display', 'Local Digital-Display', 'Desktop Display', 'Mobile Display'}
     digital_search = {'National Digital-Search', 'Local Digital-Search'}
-    audio = {'Network Radio', 'Local Radio', 'Podcast'}
+    audio = set()
 
     if mt in social:
         return 'Social Media'
