@@ -3,9 +3,9 @@ Adintel + Pathmatics + MediaRadar Combiner - Streamlit App
 Deploy to Streamlit Cloud for free: https://streamlit.io/cloud
 
 Methodology v5:
-- AdIntel: Keep ALL data (traditional + digital display/video + YouTube) EXCEPT:
+- AdIntel: Keep ALL data (traditional + digital display/video + YouTube + Search) EXCEPT:
   - Streaming (covered by Pathmatics OTT)
-  - Financial publishers: Twitch, Morningstar, Economist, Marketwatch, Investing.com, 
+  - Financial publishers: Twitch, Morningstar, Economist, Marketwatch, Investing.com,
     Investors.com, Zacks, TheAtlantic (covered by Pathmatics)
 - Pathmatics: Add only Social Media and OTT/CTV (exclude Desktop/Mobile Display/Video and YouTube)
   - EXCEPTION: Keep Desktop/Mobile Display/Video for financial publishers listed above
@@ -30,8 +30,6 @@ EXCLUDED_PATHMATICS_CHANNELS = {
 }
 
 # ========== PUBLISHERS TO EXCLUDE FROM ADINTEL (use Pathmatics instead) ==========
-# Financial publishers where Pathmatics has better coverage
-# Include variations (with and without .COM/.TV) for exact matching
 ADINTEL_EXCLUDE_DISTRIBUTORS = {
     'MORNINGSTAR', 'MORNINGSTAR.COM',
     'ECONOMIST', 'ECONOMIST.COM',
@@ -43,7 +41,7 @@ ADINTEL_EXCLUDE_DISTRIBUTORS = {
     'TWITCH', 'TWITCH.TV',
 }
 
-# ========== PUBLISHERS TO KEEP FROM PATHMATICS (even when excluding Desktop/Mobile Display/Video) ==========
+# ========== PUBLISHERS TO KEEP FROM PATHMATICS ==========
 PATHMATICS_KEEP_PUBLISHERS = {
     'twitch', 'twitch.tv',
     'morningstar.com',
@@ -77,19 +75,37 @@ MEDIARADAR_FORMAT_MAP = {
     },
 }
 
-# ========== OPTIONAL COLUMN DETECTION ==========
-# (output_name, adintel_source, pathmatics_source, mediaradar_source)
-# Daypart is now optional — only included when detected in AdIntel
+# ========== OPTIONAL COLUMNS (cross-source) ==========
+# (output_name, adintel_col, pathmatics_col, mediaradar_col)
 OPTIONAL_COLUMNS = [
-    ('Landing Page', 'Landing Page URL', 'Landing Page', None),
-    ('Buy Type', 'Buy Type', 'Ad Buy Type', None),
-    ('Daypart', 'Daypart', None, None),
-    ('Device (Adintel)', 'Device', None, None),
-    ('Delivery Platform (Adintel)', 'Delivery Platform', None, None),
-    ('Placement (Pathmatics)', None, 'Placement', None),
-    ('Program Name', 'Program Name', None, None),
-    ('Program Genre', 'Program Genre', None, None),
-    ('Creative ID', 'Creative ID', 'Creative Id', None),
+    ('Ad Buy Type',                 'Buy Type',             'Ad Buy Type',              None),
+    ('Landing Page URL',            'Landing Page URL',     'Landing Page',             None),
+    ('Ad Service Type',             'Ad Service Type',      'Purchase Channel Type',    None),
+    ('Creative Type',               'Ad SubType',           'Creative Type',            None),
+    ('First Seen',                  'First Appear Date',    'First Seen',               None),
+    ('Creative Details',            'Creative Description', 'Text',                     None),
+    ('Creative ID',                 'Creative ID',          'Creative Id',              None),
+    ('Daypart',                     'Daypart',              None,                       None),
+    ('Device (Adintel)',            'Device',               None,                       None),
+    ('Delivery Platform (Adintel)', 'Delivery Platform',    None,                       None),
+    ('Placement (Pathmatics)',      None,                   'Placement',                None),
+    ('Program Name',                'Program Name',         None,                       None),
+    ('Program Genre',               'Program Genre',        None,                       None),
+]
+
+# ========== ADINTEL-ONLY COLUMNS ==========
+# No Pathmatics/MediaRadar equivalent — N/A for all other sources by design.
+# Ad Size is handled separately due to custom Pathmatics concatenation logic.
+ADINTEL_ONLY_COLUMNS = [
+    'Clicks',
+    'CPC',
+    'CTR',
+    'Ad Visibility',
+    'Advertiser Domain',
+    'Advertiser Search Category',
+    'Avg Rank',
+    'Search Keyword',
+    'Search Keyword Group',
 ]
 
 
@@ -113,7 +129,6 @@ def detect_version(adintel_df):
 
 
 def detect_adintel_brand_col(adintel_df):
-    """Detect which brand column AdIntel uses (varies by export)."""
     if 'Brand Core' in adintel_df.columns:
         return 'Brand Core'
     elif 'Brand Variant' in adintel_df.columns:
@@ -124,7 +139,6 @@ def detect_adintel_brand_col(adintel_df):
 
 
 def detect_optional_columns(adintel_df, pathmatics_df, mr_df=None):
-    """Detect which optional columns are available across sources."""
     detected = []
     for output_name, ai_col, path_col, mr_col in OPTIONAL_COLUMNS:
         found = False
@@ -139,8 +153,58 @@ def detect_optional_columns(adintel_df, pathmatics_df, mr_df=None):
     return detected
 
 
+def detect_ad_size(adintel_df, pathmatics_df):
+    """Ad Size is optional but requires custom logic: concat Width*Height from Pathmatics."""
+    has_adintel = 'Ad Size' in adintel_df.columns
+    has_pathmatics = 'Width' in pathmatics_df.columns and 'Height' in pathmatics_df.columns
+    return has_adintel or has_pathmatics
+
+
+def detect_adintel_only_columns(adintel_df):
+    """Detect which AdIntel-only columns are present in the upload."""
+    return [col for col in ADINTEL_ONLY_COLUMNS if col in adintel_df.columns]
+
+
+def check_column_warnings(adintel_df, pathmatics_df):
+    """
+    Return warning messages when a column exists in one source but not the other.
+    Shown before processing so users can re-export if needed.
+    """
+    warnings = []
+
+    for output_name, ai_col, path_col, _ in OPTIONAL_COLUMNS:
+        ai_has = ai_col is not None and ai_col in adintel_df.columns
+        path_has = path_col is not None and path_col in pathmatics_df.columns
+
+        if ai_has and path_col is not None and not path_has:
+            warnings.append(
+                f"**{output_name}**: AdIntel has `{ai_col}` but your Pathmatics export "
+                f"is missing `{path_col}` — Pathmatics rows will show N/A."
+            )
+        elif path_has and ai_col is not None and not ai_has:
+            warnings.append(
+                f"**{output_name}**: Pathmatics has `{path_col}` but your AdIntel export "
+                f"is missing `{ai_col}` — AdIntel rows will show N/A."
+            )
+
+    # Ad Size — separate check (two-column Pathmatics logic)
+    ai_has_size = 'Ad Size' in adintel_df.columns
+    path_has_size = 'Width' in pathmatics_df.columns and 'Height' in pathmatics_df.columns
+    if ai_has_size and not path_has_size:
+        warnings.append(
+            "**Ad Size**: AdIntel has `Ad Size` but your Pathmatics export is missing "
+            "`Width` and/or `Height` — Pathmatics rows will show N/A."
+        )
+    elif path_has_size and not ai_has_size:
+        warnings.append(
+            "**Ad Size**: Pathmatics has `Width`/`Height` but your AdIntel export is "
+            "missing `Ad Size` — AdIntel rows will show N/A."
+        )
+
+    return warnings
+
+
 def map_optional_columns(df, source, detected_optionals):
-    """Map source-specific optional columns to standardized output names."""
     for output_name, ai_col, path_col, mr_col in OPTIONAL_COLUMNS:
         if output_name not in detected_optionals:
             continue
@@ -180,6 +244,8 @@ def assign_adintel_middle_category(row):
         return 'Digital Video'
     elif 'digital' in media_type and 'display' in media_type:
         return 'Digital Display'
+    elif 'digital' in media_type and 'search' in media_type:
+        return 'Digital Search'
     elif 'radio' in media_type:
         return 'Audio'
     return row.get('Media Category', 'N/A')
@@ -193,6 +259,7 @@ def group_media_type(media_type):
     clearance_tv = {'Network Clearance Spot TV', 'Syndicated Clearance Spot TV'}
     digital_video = {'National Digital-Video', 'Local Digital-Video', 'YouTube (Digital Video)'}
     digital_display = {'National Digital-Display', 'Local Digital-Display'}
+    digital_search = {'National Digital-Search', 'Local Digital-Search'}
     audio = {'Network Radio', 'Local Radio', 'Podcast'}
 
     if mt in social:
@@ -205,6 +272,8 @@ def group_media_type(media_type):
         return 'Digital Video'
     elif mt in digital_display:
         return 'Digital Display'
+    elif mt in digital_search:
+        return 'Digital Search'
     elif mt in audio:
         return 'Audio'
     elif mt == 'Email':
@@ -235,15 +304,12 @@ def read_pathmatics(uploaded_file):
 
 
 def read_mediaradar(uploaded_file):
-    """Read MediaRadar file with dynamic header detection."""
     filename = uploaded_file.name
-
     if filename.endswith('.csv'):
         raw = pd.read_csv(uploaded_file, header=None)
     else:
         raw = pd.read_excel(uploaded_file, sheet_name='Report Builder', header=None)
 
-    # Find the row containing 'Format' to use as header
     header_row = None
     for idx, row in raw.iterrows():
         if row.astype(str).str.strip().str.lower().eq('format').any():
@@ -263,9 +329,7 @@ def read_mediaradar(uploaded_file):
     return df
 
 
-def process_mediaradar(mr_df, date_col, detected_optionals):
-    """Process MediaRadar data: filter formats, unpivot months, map columns."""
-
+def process_mediaradar(mr_df, date_col, detected_optionals, include_ad_size, adintel_only_detected):
     mr_df['Format'] = mr_df['Format'].str.strip()
     before = len(mr_df)
     mr_df = mr_df[mr_df['Format'].isin(INCLUDED_MEDIARADAR_FORMATS)]
@@ -274,24 +338,20 @@ def process_mediaradar(mr_df, date_col, detected_optionals):
     if mr_df.empty:
         return pd.DataFrame(), 0, formats_excluded, 0
 
-    # Filter to US National market only
     market_excluded = 0
     if 'Market' in mr_df.columns:
         before = len(mr_df)
         mr_df = mr_df[mr_df['Market'].str.strip() == 'US National']
         market_excluded = before - len(mr_df)
-        # Rename US National to National for consistency
         mr_df['Market'] = 'National'
 
     if mr_df.empty:
         return pd.DataFrame(), 0, formats_excluded, market_excluded
 
-    # Identify month columns
     non_month_cols = ['Parent', 'Product Line', 'Format', 'Detailed Property',
                       'Media Property', 'National/Local', 'Market']
     month_cols = [c for c in mr_df.columns if c not in non_month_cols]
 
-    # Unpivot monthly spend columns into rows
     mr_melted = mr_df.melt(
         id_vars=[c for c in non_month_cols if c in mr_df.columns],
         value_vars=month_cols,
@@ -299,7 +359,6 @@ def process_mediaradar(mr_df, date_col, detected_optionals):
         value_name='Dollars'
     )
 
-    # Drop rows with no spend
     mr_melted['Dollars'] = pd.to_numeric(mr_melted['Dollars'].astype(str).str.replace(
         r'[\$,]', '', regex=True), errors='coerce')
     mr_melted = mr_melted.dropna(subset=['Dollars'])
@@ -308,12 +367,10 @@ def process_mediaradar(mr_df, date_col, detected_optionals):
     if mr_melted.empty:
         return pd.DataFrame(), 0, formats_excluded, market_excluded
 
-    # Parse month to datetime
     mr_melted[date_col] = pd.to_datetime(mr_melted['Month_Raw'], format='%b %Y', errors='coerce')
     if mr_melted[date_col].isna().all():
         mr_melted[date_col] = pd.to_datetime(mr_melted['Month_Raw'], errors='coerce')
 
-    # Map format to media type, media category, middle media category
     mr_melted['Media Type'] = mr_melted['Format'].map(
         lambda x: MEDIARADAR_FORMAT_MAP.get(x, {}).get('Media Type', x))
     mr_melted['Media Category'] = mr_melted['Format'].map(
@@ -321,7 +378,6 @@ def process_mediaradar(mr_df, date_col, detected_optionals):
     mr_melted['Middle Media Category'] = mr_melted['Format'].map(
         lambda x: MEDIARADAR_FORMAT_MAP.get(x, {}).get('Middle Media Category', 'N/A'))
 
-    # Map columns
     mr_melted['Source'] = 'MediaRadar'
     mr_melted['Subsidiary'] = mr_melted.get('Parent', 'N/A')
     mr_melted['Brand Variant'] = mr_melted.get('Product Line', 'N/A')
@@ -332,8 +388,13 @@ def process_mediaradar(mr_df, date_col, detected_optionals):
     mr_melted['Estimated Impressions'] = 0
     mr_melted['Parent'] = mr_melted.get('Parent', 'N/A')
 
-    # Map optional columns (handles Creative ID -> 'N/A' automatically if detected elsewhere)
     mr_melted = map_optional_columns(mr_melted, 'MediaRadar', detected_optionals)
+
+    if include_ad_size:
+        mr_melted['Ad Size'] = 'N/A'
+
+    for col in adintel_only_detected:
+        mr_melted[col] = 'N/A'
 
     return mr_melted, len(mr_melted), formats_excluded, market_excluded
 
@@ -343,21 +404,21 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
     include_impressions = 'impressions' in version
     date_col = 'Date' if is_weekly else 'Month'
 
-    # ========== DETECT OPTIONAL COLUMNS ==========
+    # ========== DETECT COLUMNS ==========
     detected_optionals = detect_optional_columns(adintel_df, pathmatics_df, mr_df)
+    include_ad_size = detect_ad_size(adintel_df, pathmatics_df)
+    adintel_only_detected = detect_adintel_only_columns(adintel_df)
 
     # ========== ADINTEL DATES ==========
     footer_removed = 0
     if is_weekly:
         adintel_df['Date'] = adintel_df['Week'].str.split(' - ').str[0]
         adintel_df['Date'] = pd.to_datetime(adintel_df['Date'], format='%m/%d/%Y', errors='coerce')
-        # Remove footer/metadata rows (invalid dates become NaT)
         before_clean = len(adintel_df)
         adintel_df = adintel_df[adintel_df['Date'].notna()]
         footer_removed = before_clean - len(adintel_df)
     else:
         adintel_df['Month'] = pd.to_datetime(adintel_df['Month'], errors='coerce')
-        # Remove footer/metadata rows (invalid dates become NaT)
         before_clean = len(adintel_df)
         adintel_df = adintel_df[adintel_df['Month'].notna()]
         footer_removed = before_clean - len(adintel_df)
@@ -377,7 +438,7 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
         adintel_df.loc[youtube_mask, 'Media Type'] = 'YouTube (Digital Video)'
         youtube_count = youtube_mask.sum()
 
-    # Filter out financial publishers from AdIntel (use Pathmatics instead) - EXACT MATCHING
+    # Filter out financial publishers from AdIntel
     financial_removed = 0
     if 'Distributor' in adintel_df.columns:
         before = len(adintel_df)
@@ -385,23 +446,24 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
         adintel_df = adintel_df[~exclude_mask]
         financial_removed = before - len(adintel_df)
 
-    # Detect brand column and save Brand Variant
+    # Detect brand column
     adintel_brand_col = detect_adintel_brand_col(adintel_df)
     if adintel_brand_col:
         adintel_df['Brand Variant'] = adintel_df[adintel_brand_col]
 
-    # Detect Parent
     has_adintel_parent = 'Parent' in adintel_df.columns
 
-    # Map optional columns for AdIntel (includes Creative ID if detected)
+    # Map optional columns for AdIntel
     adintel_df = map_optional_columns(adintel_df, 'AdIntel', detected_optionals)
 
-    # ========== PATHMATICS ==========
+    # Ad Size — AdIntel (direct passthrough; column already present if detected)
+    if include_ad_size and 'Ad Size' not in adintel_df.columns:
+        adintel_df['Ad Size'] = 'N/A'
 
-    # Exclude channels covered by AdIntel, BUT keep financial publishers - EXACT MATCHING
+    # ========== PATHMATICS ==========
     before_filter = len(pathmatics_df)
     kept_publishers = 0
-    
+
     if 'Publisher' in pathmatics_df.columns:
         keep_publisher_mask = pathmatics_df['Publisher'].str.lower().str.strip().isin(PATHMATICS_KEEP_PUBLISHERS)
         channel_exclude_mask = pathmatics_df['Channel'].str.strip().isin(EXCLUDED_PATHMATICS_CHANNELS)
@@ -409,25 +471,36 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
         kept_publishers = keep_publisher_mask.sum()
     else:
         pathmatics_df = pathmatics_df[~pathmatics_df['Channel'].str.strip().isin(EXCLUDED_PATHMATICS_CHANNELS)]
-    
+
     channels_removed = before_filter - len(pathmatics_df)
 
-    # Brand Variant from Brand Leaf
     if 'Brand Leaf' in pathmatics_df.columns:
         pathmatics_df['Brand Variant'] = pathmatics_df['Brand Leaf']
     elif 'Brand Root' in pathmatics_df.columns:
         pathmatics_df['Brand Variant'] = pathmatics_df['Brand Root']
 
-    # Subsidiary = Brand Root
     if 'Brand Root' in pathmatics_df.columns:
         pathmatics_df['Subsidiary'] = pathmatics_df['Brand Root']
 
-    # Parent = Advertiser
     if 'Advertiser' in pathmatics_df.columns:
         pathmatics_df['Parent'] = pathmatics_df['Advertiser']
 
-    # Map optional columns for Pathmatics (includes Creative ID if detected)
+    # Map optional columns for Pathmatics
     pathmatics_df = map_optional_columns(pathmatics_df, 'Pathmatics', detected_optionals)
+
+    # Ad Size — Pathmatics (concatenate Width*Height)
+    if include_ad_size:
+        if 'Width' in pathmatics_df.columns and 'Height' in pathmatics_df.columns:
+            pathmatics_df['Ad Size'] = (
+                pathmatics_df['Width'].astype(str).str.strip() + '*' +
+                pathmatics_df['Height'].astype(str).str.strip()
+            )
+        else:
+            pathmatics_df['Ad Size'] = 'N/A'
+
+    # AdIntel-only columns: fill N/A for Pathmatics
+    for col in adintel_only_detected:
+        pathmatics_df[col] = 'N/A'
 
     pathmatics_df['Date'] = pd.to_datetime(pathmatics_df['Date'], errors='coerce')
 
@@ -478,17 +551,20 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
     base_columns = [
         'Source', 'Subsidiary', 'Brand Variant', 'Distributor',
         'Distributor Description', 'Media Type', 'Media Category',
-        'Middle Media Category', 'Market',
-        'Commercial Duration',
+        'Middle Media Category', 'Market', 'Commercial Duration',
     ]
     if include_parent:
         base_columns.insert(1, 'Parent')
 
-    # Insert optional columns before date column
     for opt_col in detected_optionals:
         base_columns.append(opt_col)
 
-    # Date and spend columns
+    if include_ad_size:
+        base_columns.append('Ad Size')
+
+    for col in adintel_only_detected:
+        base_columns.append(col)
+
     base_columns.append(date_col)
     base_columns.append('Dollars')
 
@@ -506,6 +582,11 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
         for opt_col in detected_optionals:
             if opt_col not in df.columns:
                 df[opt_col] = 'N/A'
+        if include_ad_size and 'Ad Size' not in df.columns:
+            df['Ad Size'] = 'N/A'
+        for col in adintel_only_detected:
+            if col not in df.columns:
+                df[col] = 'N/A'
 
     pathmatics_selected = pathmatics_df[base_columns]
     adintel_selected = adintel_df[base_columns]
@@ -518,7 +599,9 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
     mr_formats_excluded = 0
     mr_market_excluded = 0
     if mr_df is not None:
-        mr_processed, mr_count, mr_formats_excluded, mr_market_excluded = process_mediaradar(mr_df, date_col, detected_optionals)
+        mr_processed, mr_count, mr_formats_excluded, mr_market_excluded = process_mediaradar(
+            mr_df, date_col, detected_optionals, include_ad_size, adintel_only_detected
+        )
         if not mr_processed.empty:
             for col in base_columns:
                 if col not in mr_processed.columns:
@@ -527,8 +610,9 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
 
     combined_df = pd.concat(frames, ignore_index=True)
 
+    NUMERIC_COLS = {'Dollars', 'Estimated Impressions', 'Clicks', 'CPC', 'CTR', 'Avg Rank'}
     for col in combined_df.columns:
-        if col != date_col:
+        if col != date_col and col not in NUMERIC_COLS:
             combined_df[col] = combined_df[col].fillna('N/A')
 
     combined_df['Media Type Grouped'] = combined_df['Media Type'].apply(group_media_type)
@@ -537,7 +621,8 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
         combined_df, len(pathmatics_selected), len(adintel_selected),
         streaming_removed, channels_removed, youtube_count,
         mr_count, mr_formats_excluded, detected_optionals, financial_removed,
-        kept_publishers, footer_removed, mr_market_excluded
+        kept_publishers, footer_removed, mr_market_excluded,
+        include_ad_size, adintel_only_detected
     )
 
 
@@ -548,13 +633,14 @@ st.markdown("""
 Upload your files to automatically combine them.
 
 **Methodology v5:**
-- **AdIntel** → All traditional media + digital display/video + YouTube
+- **AdIntel** → All traditional media + digital display/video + YouTube + Search
   - *Excludes: Streaming, Twitch, Morningstar, Economist, Marketwatch, Investing.com, Investors.com, Zacks, TheAtlantic*
 - **Pathmatics** → Social media (FB, IG, TikTok, etc.) + OTT/CTV
   - *Includes: Desktop/Mobile Display/Video for financial publishers (Twitch, Morningstar, etc.)*
 - **MediaRadar** *(optional)* → Podcast, Email, Retail Media (Native) — US National only
 - No overlap between sources
 """)
+
 with st.expander("📖 Column Requirements by Source"):
     st.markdown("""
     ### Mandatory Columns
@@ -579,27 +665,46 @@ with st.expander("📖 Column Requirements by Source"):
     | Parent | `Parent` | `Advertiser` | `Parent` |
     | Estimated Impressions | `ImpE_P18_99` or `IMP_P2_99` | `Impressions` | — (N/A) |
 
-    ### Optional Columns (appear when detected in any source)
+    ### Optional Columns — Cross-Source (appear when detected in any source; N/A for sources missing the column)
 
     | Output Column | AdIntel | Pathmatics | MediaRadar |
     |---|---|---|---|
-    | Landing Page | `Landing Page URL` | `Landing Page` | — |
-    | Buy Type | `Buy Type` | `Ad Buy Type` | — |
+    | Ad Buy Type | `Buy Type` | `Ad Buy Type` | — |
+    | Landing Page URL | `Landing Page URL` | `Landing Page` | — |
+    | Ad Service Type | `Ad Service Type` | `Purchase Channel Type` | — |
+    | Creative Type | `Ad SubType` | `Creative Type` | — |
+    | First Seen | `First Appear Date` | `First Seen` | — |
+    | Creative Details | `Creative Description` | `Text` | — |
+    | Creative ID | `Creative ID` | `Creative Id` | — |
+    | Ad Size | `Ad Size` | `Width` + `Height` (auto-concatenated as `W*H`) | — |
     | Daypart | `Daypart` | — (N/A) | — (N/A) |
     | Device (Adintel) | `Device` | — | — |
     | Delivery Platform (Adintel) | `Delivery Platform` | — | — |
     | Placement (Pathmatics) | — | `Placement` | — |
     | Program Name | `Program Name` | — | — |
     | Program Genre | `Program Genre` | — | — |
-    | Creative ID | `Creative ID` | `Creative Id` | — |
+
+    ### Optional Columns — AdIntel Only (appear when detected; N/A for all other sources by design)
+
+    | Output Column | AdIntel Source Column |
+    |---|---|
+    | Clicks | `Clicks` |
+    | CPC | `CPC` |
+    | CTR | `CTR` |
+    | Ad Visibility | `Ad Visibility` |
+    | Advertiser Domain | `Advertiser Domain` |
+    | Advertiser Search Category | `Advertiser Search Category` |
+    | Avg Rank | `Avg Rank` |
+    | Search Keyword | `Search Keyword` |
+    | Search Keyword Group | `Search Keyword Group` |
 
     ### Auto-Generated Columns
 
     | Column | Description |
     |---|---|
     | Source | `AdIntel`, `Pathmatics`, or `MediaRadar` |
-    | Middle Media Category | Mid-level grouping (Digital Video, Digital Display, Digital Social, OTT, Audio, Retail Media, etc.) |
-    | Media Type Grouped | Top-level grouping (Digital Video, Social Media, Audio, Retail Media, etc.) |
+    | Middle Media Category | Mid-level grouping (Digital Video, Digital Display, Digital Search, Digital Social, OTT, Audio, Retail Media, etc.) |
+    | Media Type Grouped | Top-level grouping (Digital Video, Digital Display, Digital Search, Social Media, Audio, Retail Media, etc.) |
 
     *MediaRadar is optional. Columns marked "—" are filled as N/A.*
     """)
@@ -607,30 +712,22 @@ with st.expander("📖 Column Requirements by Source"):
 with st.expander("📋 Publisher Handling Rules"):
     st.markdown("""
     ### AdIntel Excluded Publishers (use Pathmatics instead)
-    These publishers are excluded from AdIntel because Pathmatics has better coverage:
     - `TWITCH`, `TWITCH.TV`
     - `MORNINGSTAR`, `MORNINGSTAR.COM`
     - `ECONOMIST`, `ECONOMIST.COM`
     - `MARKETWATCH`, `MARKETWATCH.COM`
-    - `INVESTING.COM`
-    - `INVESTORS.COM`
+    - `INVESTING.COM`, `INVESTORS.COM`
     - `ZACKS`, `ZACKS.COM`
     - `THEATLANTIC`, `THEATLANTIC.COM`, `THE ATLANTIC`
 
     ### Pathmatics Keep Publishers (even when excluding Desktop/Mobile Display/Video)
-    For these publishers, we keep Desktop/Mobile Display/Video data from Pathmatics:
-    - `twitch`, `twitch.tv`
-    - `morningstar.com`
-    - `economist.com`
-    - `marketwatch.com`
-    - `investing.com`
-    - `investors.com`
-    - `zacks.com`
-    - `theatlantic.com`
+    - `twitch`, `twitch.tv`, `morningstar.com`, `economist.com`, `marketwatch.com`
+    - `investing.com`, `investors.com`, `zacks.com`, `theatlantic.com`
 
     *This ensures financial and gaming publishers have accurate coverage from the source with better tracking.*
     """)
 
+# ========== FILE UPLOADERS ==========
 col1, col2, col3 = st.columns(3)
 
 with col1:
@@ -662,13 +759,27 @@ if adintel_file and pathmatics_file:
                 brand_col = detect_adintel_brand_col(adintel_df)
                 has_parent = 'Parent' in adintel_df.columns
                 opt_cols = detect_optional_columns(adintel_df, pathmatics_df, mr_df)
+                has_ad_size = detect_ad_size(adintel_df, pathmatics_df)
+                ai_only_cols = detect_adintel_only_columns(adintel_df)
 
                 status = f"✅ Detected format: **{version_display}** | Brand column: **{brand_col or 'Not found'}**"
                 if has_parent:
                     status += " | Parent: **detected**"
-                if opt_cols:
-                    status += f" | Optional columns: **{', '.join(opt_cols)}**"
+                all_opt = opt_cols + (['Ad Size'] if has_ad_size else []) + ai_only_cols
+                if all_opt:
+                    status += f" | Optional columns: **{', '.join(all_opt)}**"
                 st.success(status)
+
+                # ========== COLUMN MISMATCH WARNINGS ==========
+                col_warnings = check_column_warnings(adintel_df, pathmatics_df)
+                if col_warnings:
+                    st.warning(
+                        "⚠️ **Column mismatch detected** — the following columns are present in one "
+                        "source but not the other. Rows from the missing source will show N/A. "
+                        "You may want to re-export before continuing."
+                    )
+                    for w in col_warnings:
+                        st.markdown(f"- {w}")
 
                 cols = st.columns(3 if mr_df is not None else 2)
                 with cols[0]:
@@ -686,7 +797,8 @@ if adintel_file and pathmatics_file:
                             combined_df, path_count, adin_count,
                             streaming_rm, channels_rm, yt_count,
                             mr_count, mr_fmt_excl, detected_opts, financial_rm,
-                            kept_pubs, footer_rm, mr_market_excl
+                            kept_pubs, footer_rm, mr_market_excl,
+                            incl_ad_size, ai_only_detected
                         ) = process_files(
                             adintel_df.copy(), pathmatics_df.copy(), version,
                             mr_df=mr_df.copy() if mr_df is not None else None
@@ -712,7 +824,7 @@ if adintel_file and pathmatics_file:
                     with st.expander("📋 Processing Details"):
                         st.write(f"**AdIntel footer/metadata rows removed:** {footer_rm:,}")
                         st.write(f"**AdIntel Streaming rows removed:** {streaming_rm:,} (covered by Pathmatics OTT)")
-                        st.write(f"**AdIntel financial publisher rows removed:** {financial_rm:,} (Twitch, Morningstar, etc. - covered by Pathmatics)")
+                        st.write(f"**AdIntel financial publisher rows removed:** {financial_rm:,} (Twitch, Morningstar, etc.)")
                         st.write(f"**AdIntel YouTube rows relabeled:** {yt_count:,} → 'YouTube (Digital Video)'")
                         st.write(f"**Pathmatics rows excluded:** {channels_rm:,} (Desktop/Mobile Display/Video + YouTube)")
                         st.write(f"**Pathmatics financial publisher rows kept:** {kept_pubs:,} (Twitch, Morningstar, etc.)")
@@ -722,10 +834,16 @@ if adintel_file and pathmatics_file:
                             st.write(f"**MediaRadar format rows excluded:** {mr_fmt_excl:,} (formats already covered by AdIntel/Pathmatics)")
                             st.write(f"**MediaRadar market rows excluded:** {mr_market_excl:,} (non-US National)")
                         if detected_opts:
-                            st.write(f"**Optional columns detected:** {', '.join(detected_opts)}")
+                            st.write(f"**Optional cross-source columns included:** {', '.join(detected_opts)}")
+                        if incl_ad_size:
+                            st.write("**Ad Size:** included (AdIntel direct / Pathmatics Width×Height concatenated)")
+                        if ai_only_detected:
+                            st.write(f"**AdIntel-only columns included:** {', '.join(ai_only_detected)}")
 
                     with st.expander("📊 Media Type Breakdown"):
-                        source_summary = combined_df.groupby(['Source', 'Media Type Grouped'])['Dollars'].sum().reset_index()
+                        breakdown_df = combined_df[['Source', 'Media Type Grouped']].copy()
+                        breakdown_df['Dollars'] = pd.to_numeric(combined_df['Dollars'], errors='coerce').fillna(0)
+                        source_summary = breakdown_df.groupby(['Source', 'Media Type Grouped'])['Dollars'].sum().reset_index()
                         source_summary['Dollars'] = source_summary['Dollars'].apply(lambda x: f"${x:,.0f}")
                         st.dataframe(source_summary, use_container_width=True)
 
@@ -753,10 +871,11 @@ else:
 
 st.markdown("---")
 st.markdown("""
-*Methodology v5 — Auto-detects Weekly/Monthly, Impressions, Brand column, Parent column, and optional digital columns*
+*Methodology v5 — Auto-detects Weekly/Monthly, Impressions, Brand column, Parent column, optional cross-source columns, Ad Size, and AdIntel-only Search columns*
+
 | Source | Covers | Excludes |
 |--------|--------|----------|
-| **AdIntel** | TV, Radio, Print, Outdoor, Digital Display, Digital Video, YouTube | Streaming, Twitch, Morningstar, Economist, Marketwatch, Investing.com, Investors.com, Zacks, TheAtlantic |
+| **AdIntel** | TV, Radio, Print, Outdoor, Digital Display, Digital Video, YouTube, Search | Streaming, Twitch, Morningstar, Economist, Marketwatch, Investing.com, Investors.com, Zacks, TheAtlantic |
 | **Pathmatics** | Social Media (FB, IG, TikTok, Snap, X, LinkedIn, Pinterest, Reddit) + OTT/CTV + Financial publishers | Desktop/Mobile Display/Video (except financial publishers) |
 | **MediaRadar** | Podcast → Audio, Email → Digital, Retail Media → Digital (Retail Media) | Non-US National markets |
 """)
