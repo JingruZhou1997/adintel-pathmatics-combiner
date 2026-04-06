@@ -166,6 +166,27 @@ def detect_adintel_only_columns(adintel_df):
     return [col for col in ADINTEL_ONLY_COLUMNS if col in adintel_df.columns]
 
 
+def apply_device_remapping(adintel_df):
+    """Remap AdIntel Media Type to Mobile/Desktop Display/Video based on Device column."""
+    if 'Device' not in adintel_df.columns:
+        return adintel_df
+
+    display_types = {'National Digital-Display', 'Local Digital-Display'}
+    video_types = {'National Digital-Video', 'Local Digital-Video'}
+
+    mobile_mask = adintel_df['Device'].str.strip().str.lower() == 'mobile'
+    desktop_mask = adintel_df['Device'].str.strip().str.lower() == 'desktop'
+    display_mask = adintel_df['Media Type'].str.strip().isin(display_types)
+    video_mask = adintel_df['Media Type'].str.strip().isin(video_types)
+
+    adintel_df.loc[mobile_mask & display_mask, 'Media Type'] = 'Mobile Display'
+    adintel_df.loc[desktop_mask & display_mask, 'Media Type'] = 'Desktop Display'
+    adintel_df.loc[mobile_mask & video_mask, 'Media Type'] = 'Mobile Video'
+    adintel_df.loc[desktop_mask & video_mask, 'Media Type'] = 'Desktop Video'
+
+    return adintel_df
+
+
 def check_column_warnings(adintel_df, pathmatics_df):
     """
     Return warning messages when a column exists in one source but not the other.
@@ -446,6 +467,9 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
         exclude_mask = adintel_df['Distributor'].str.strip().str.upper().isin(ADINTEL_EXCLUDE_DISTRIBUTORS)
         adintel_df = adintel_df[~exclude_mask]
         financial_removed = before - len(adintel_df)
+
+    # Remap Media Type based on Device column (Mobile/Desktop split)
+    adintel_df = apply_device_remapping(adintel_df)
 
     # Detect brand column
     adintel_brand_col = detect_adintel_brand_col(adintel_df)
