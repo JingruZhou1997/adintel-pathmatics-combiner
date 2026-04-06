@@ -10,7 +10,7 @@ Methodology v5:
 - Pathmatics: Add only Social Media and OTT/CTV (exclude Desktop/Mobile Display/Video and YouTube)
   - EXCEPTION: Keep Desktop/Mobile Display/Video for financial publishers listed above
 - MediaRadar: Add only Podcast, Email, and Retail Media (Native) — US National market only
-- YouTube: Labeled separately as 'YouTube (Digital Video)' from AdIntel distributor data
+- YouTube: Labeled separately as 'YouTube (digital video)' from AdIntel distributor data
 
 To run locally:
     pip install streamlit pandas openpyxl
@@ -257,8 +257,8 @@ def group_media_type(media_type):
               'X', 'Twitter', 'LinkedIn', 'Pinterest', 'Reddit'}
     spanish_tv = {'Spanish Language Cable TV', 'Spanish Language Network TV'}
     clearance_tv = {'Network Clearance Spot TV', 'Syndicated Clearance Spot TV'}
-    digital_video = {'National Digital-Video', 'Local Digital-Video', 'YouTube (Digital Video)'}
-    digital_display = {'National Digital-Display', 'Local Digital-Display'}
+    digital_video = {'National Digital-Video', 'Local Digital-Video', 'YouTube (digital video)', 'Desktop Video', 'Mobile Video'}
+    digital_display = {'National Digital-Display', 'Local Digital-Display', 'Desktop Display', 'Mobile Display'}
     digital_search = {'National Digital-Search', 'Local Digital-Search'}
     audio = {'Network Radio', 'Local Radio', 'Podcast'}
 
@@ -435,7 +435,7 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
     youtube_count = 0
     if 'Distributor' in adintel_df.columns:
         youtube_mask = adintel_df['Distributor'].str.strip().str.lower().str.contains('youtube', na=False)
-        adintel_df.loc[youtube_mask, 'Media Type'] = 'YouTube (Digital Video)'
+        adintel_df.loc[youtube_mask, 'Media Type'] = 'YouTube (digital video)'
         youtube_count = youtube_mask.sum()
 
     # Filter out financial publishers from AdIntel
@@ -825,7 +825,7 @@ if adintel_file and pathmatics_file:
                         st.write(f"**AdIntel footer/metadata rows removed:** {footer_rm:,}")
                         st.write(f"**AdIntel Streaming rows removed:** {streaming_rm:,} (covered by Pathmatics OTT)")
                         st.write(f"**AdIntel financial publisher rows removed:** {financial_rm:,} (Twitch, Morningstar, etc.)")
-                        st.write(f"**AdIntel YouTube rows relabeled:** {yt_count:,} → 'YouTube (Digital Video)'")
+                        st.write(f"**AdIntel YouTube rows relabeled:** {yt_count:,} → 'YouTube (digital video)'")
                         st.write(f"**Pathmatics rows excluded:** {channels_rm:,} (Desktop/Mobile Display/Video + YouTube)")
                         st.write(f"**Pathmatics financial publisher rows kept:** {kept_pubs:,} (Twitch, Morningstar, etc.)")
                         st.write("**Pathmatics channels kept:** Social platforms + OTT/CTV + financial publishers")
