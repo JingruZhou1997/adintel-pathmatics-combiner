@@ -89,6 +89,7 @@ OPTIONAL_COLUMNS = [
     ('Placement (Pathmatics)', None, 'Placement', None),
     ('Program Name', 'Program Name', None, None),
     ('Program Genre', 'Program Genre', None, None),
+    ('Creative ID', 'Creative ID', 'Creative Id', None),
 ]
 
 
@@ -331,7 +332,7 @@ def process_mediaradar(mr_df, date_col, detected_optionals):
     mr_melted['Estimated Impressions'] = 0
     mr_melted['Parent'] = mr_melted.get('Parent', 'N/A')
 
-    # Map optional columns (handles Daypart -> 'N/A' automatically if detected elsewhere)
+    # Map optional columns (handles Creative ID -> 'N/A' automatically if detected elsewhere)
     mr_melted = map_optional_columns(mr_melted, 'MediaRadar', detected_optionals)
 
     return mr_melted, len(mr_melted), formats_excluded, market_excluded
@@ -392,7 +393,7 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
     # Detect Parent
     has_adintel_parent = 'Parent' in adintel_df.columns
 
-    # Map optional columns for AdIntel (includes Daypart if detected)
+    # Map optional columns for AdIntel (includes Creative ID if detected)
     adintel_df = map_optional_columns(adintel_df, 'AdIntel', detected_optionals)
 
     # ========== PATHMATICS ==========
@@ -425,7 +426,7 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
     if 'Advertiser' in pathmatics_df.columns:
         pathmatics_df['Parent'] = pathmatics_df['Advertiser']
 
-    # Map optional columns for Pathmatics (Daypart -> 'N/A' automatically if detected)
+    # Map optional columns for Pathmatics (includes Creative ID if detected)
     pathmatics_df = map_optional_columns(pathmatics_df, 'Pathmatics', detected_optionals)
 
     pathmatics_df['Date'] = pd.to_datetime(pathmatics_df['Date'], errors='coerce')
@@ -484,7 +485,6 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
         base_columns.insert(1, 'Parent')
 
     # Insert optional columns before date column
-    # (Daypart included here only if detected in AdIntel)
     for opt_col in detected_optionals:
         base_columns.append(opt_col)
 
@@ -591,6 +591,7 @@ with st.expander("📖 Column Requirements by Source"):
     | Placement (Pathmatics) | — | `Placement` | — |
     | Program Name | `Program Name` | — | — |
     | Program Genre | `Program Genre` | — | — |
+    | Creative ID | `Creative ID` | `Creative Id` | — |
 
     ### Auto-Generated Columns
 
