@@ -257,7 +257,7 @@ def group_media_type(media_type):
               'X', 'Twitter', 'LinkedIn', 'Pinterest', 'Reddit'}
     spanish_tv = {'Spanish Language Cable TV', 'Spanish Language Network TV'}
     clearance_tv = {'Network Clearance Spot TV', 'Syndicated Clearance Spot TV'}
-    digital_video = {'National Digital-Video', 'Local Digital-Video', 'YouTube (digital video)', 'Desktop Video', 'Mobile Video'}
+    digital_video = {'National Digital-Video', 'Local Digital-Video', 'Desktop Video', 'Mobile Video'}
     digital_display = {'National Digital-Display', 'Local Digital-Display', 'Desktop Display', 'Mobile Display'}
     digital_search = {'National Digital-Search', 'Local Digital-Search'}
     audio = {'Network Radio', 'Local Radio', 'Podcast'}
