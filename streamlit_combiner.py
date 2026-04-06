@@ -106,6 +106,7 @@ ADINTEL_ONLY_COLUMNS = [
     'Avg Rank',
     'Search Keyword',
     'Search Keyword Group',
+    'Occurrence Indicator',
 ]
 
 
