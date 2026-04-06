@@ -98,8 +98,8 @@ OPTIONAL_COLUMNS = [
 # Ad Size is handled separately due to custom Pathmatics concatenation logic.
 ADINTEL_ONLY_COLUMNS = [
     'Clicks',
-    'CPC',
-    'CTR',
+    'CPC', 'CPC (x.xx)',
+    'CTR', 'CTR (x.xxx)',
     'Ad Visibility',
     'Advertiser Domain',
     'Advertiser Search Category',
@@ -506,7 +506,7 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
 
     if not is_weekly:
         pathmatics_df['Date'] = pathmatics_df['Date'] + pd.Timedelta(days=6)
-        pathmatics_df['Date'] = pd.to_datetime(pathmatics_df['Date'].dt.strftime('%B %Y'))
+        pathmatics_df['Date'] = pd.to_datetime(pathmatics_df['Date'].dt.strftime('%B %Y'), format='%B %Y')
 
     pathmatics_df['Media Category'] = 'Digital'
     pathmatics_df['Market'] = 'NATIONAL'
@@ -610,7 +610,7 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
 
     combined_df = pd.concat(frames, ignore_index=True)
 
-    NUMERIC_COLS = {'Dollars', 'Estimated Impressions', 'Clicks', 'CPC', 'CTR', 'Avg Rank'}
+    NUMERIC_COLS = {'Dollars', 'Estimated Impressions', 'Clicks', 'CPC', 'CPC (x.xx)', 'CTR', 'CTR (x.xxx)', 'Avg Rank'}
     for col in combined_df.columns:
         if col != date_col and col not in NUMERIC_COLS:
             combined_df[col] = combined_df[col].fillna('N/A')
