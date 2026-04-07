@@ -87,7 +87,6 @@ OPTIONAL_COLUMNS = [
     ('Creative ID',                 'Creative ID',          'Creative Id',              None),
     ('Daypart',                     'Daypart',              None,                       None),
     ('Device (Adintel)',            'Device',               None,                       None),
-    ('Delivery Platform (Adintel)', 'Delivery Platform',    None,                       None),
     ('Placement (Pathmatics)',      None,                   'Placement',                None),
     ('Program Name',                'Program Name',         None,                       None),
     ('Program Genre',               'Program Genre',        None,                       None),
@@ -193,6 +192,20 @@ def check_column_warnings(adintel_df, pathmatics_df):
     Shown before processing so users can re-export if needed.
     """
     warnings = []
+
+    # Parent column mismatch check
+    ai_has_parent = 'Parent' in adintel_df.columns
+    path_has_parent = 'Advertiser' in pathmatics_df.columns
+    if path_has_parent and not ai_has_parent:
+        warnings.append(
+            "**Parent**: Pathmatics has `Advertiser` (mapped to Parent) but your AdIntel export "
+            "is missing `Parent` — all AdIntel rows will show N/A for Parent."
+        )
+    elif ai_has_parent and not path_has_parent:
+        warnings.append(
+            "**Parent**: AdIntel has `Parent` but your Pathmatics export is missing "
+            "`Advertiser` — all Pathmatics rows will show N/A for Parent."
+        )
 
     for output_name, ai_col, path_col, _ in OPTIONAL_COLUMNS:
         ai_has = ai_col is not None and ai_col in adintel_df.columns
@@ -570,7 +583,7 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
         adintel_df.rename(columns=rename_map, inplace=True)
 
     # ========== DETERMINE IF PARENT COLUMN NEEDED ==========
-    include_parent = has_adintel_parent or (mr_df is not None)
+    include_parent = has_adintel_parent or (mr_df is not None) or ('Advertiser' in pathmatics_df.columns)
 
     # ========== BUILD COLUMN LIST ==========
     base_columns = [
@@ -704,7 +717,6 @@ with st.expander("📖 Column Requirements by Source"):
     | Ad Size | `Ad Size` | `Width` + `Height` (auto-concatenated as `W*H`) | — |
     | Daypart | `Daypart` | — (N/A) | — (N/A) |
     | Device (Adintel) | `Device` | — | — |
-    | Delivery Platform (Adintel) | `Delivery Platform` | — | — |
     | Placement (Pathmatics) | — | `Placement` | — |
     | Program Name | `Program Name` | — | — |
     | Program Genre | `Program Genre` | — | — |
@@ -791,6 +803,8 @@ if adintel_file and pathmatics_file:
                 status = f"✅ Detected format: **{version_display}** | Brand column: **{brand_col or 'Not found'}**"
                 if has_parent:
                     status += " | Parent: **detected**"
+                if 'Device' in adintel_df.columns:
+                    status += " | Device: **detected** (Media Type will be split to Desktop/Mobile)"
                 all_opt = opt_cols + (['Ad Size'] if has_ad_size else []) + ai_only_cols
                 if all_opt:
                     status += f" | Optional columns: **{', '.join(all_opt)}**"
