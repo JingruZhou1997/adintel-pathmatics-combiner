@@ -170,13 +170,13 @@ def apply_device_remapping(adintel_df):
     if 'Device' not in adintel_df.columns:
         return adintel_df
 
-    display_types = {'National Digital-Display', 'Local Digital-Display'}
-    video_types = {'National Digital-Video', 'Local Digital-Video'}
-
     mobile_mask = adintel_df['Device'].str.strip().str.lower() == 'mobile'
     desktop_mask = adintel_df['Device'].str.strip().str.lower() == 'desktop'
-    display_mask = adintel_df['Media Type'].str.strip().isin(display_types)
-    video_mask = adintel_df['Media Type'].str.strip().isin(video_types)
+
+    # Use substring matching to handle any spacing/formatting variation in Media Type
+    mt = adintel_df['Media Type'].str.strip().str.lower()
+    display_mask = mt.str.contains('digital', na=False) & mt.str.contains('display', na=False)
+    video_mask = mt.str.contains('digital', na=False) & mt.str.contains('video', na=False)
 
     adintel_df.loc[mobile_mask & display_mask, 'Media Type'] = 'Mobile Display'
     adintel_df.loc[desktop_mask & display_mask, 'Media Type'] = 'Desktop Display'
@@ -275,6 +275,10 @@ def assign_adintel_middle_category(row):
     media_type = str(row.get('Media Type', '')).strip().lower()
     if 'youtube' in media_type:
         return 'Digital Video'
+    elif media_type in ('mobile video', 'desktop video'):
+        return 'Digital Video'
+    elif media_type in ('mobile display', 'desktop display'):
+        return 'Digital Display'
     elif 'digital' in media_type and 'video' in media_type:
         return 'Digital Video'
     elif 'digital' in media_type and 'display' in media_type:
