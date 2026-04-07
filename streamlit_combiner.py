@@ -559,10 +559,10 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
 
     rename_map = {}
     if include_impressions:
-        if 'ImpE_P18_99' in adintel_df.columns:
-            rename_map['ImpE_P18_99'] = 'Estimated Impressions'
-        elif 'IMP_P2_99' in adintel_df.columns:
+        if 'IMP_P2_99' in adintel_df.columns:
             rename_map['IMP_P2_99'] = 'Estimated Impressions'
+        elif 'ImpE_P18_99' in adintel_df.columns:
+            rename_map['ImpE_P18_99'] = 'Estimated Impressions'
         else:
             adintel_df['Estimated Impressions'] = 0
 
