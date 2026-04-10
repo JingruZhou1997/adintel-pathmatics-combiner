@@ -9,7 +9,7 @@ Methodology v5:
     Investors.com, Zacks, TheAtlantic (covered by Pathmatics)
 - Pathmatics: Add only Social Media and OTT/CTV (exclude Desktop/Mobile Display/Video and YouTube)
   - EXCEPTION: Keep Desktop/Mobile Display/Video for financial publishers listed above
-- MediaRadar: Add only Podcast, Email, and Retail Media (Native) — US National market only
+- MediaRadar: Add only Podcast, Email, and Retail Media (Native) — excludes International and Canada markets
 - YouTube: Labeled separately as 'YouTube (digital video)' from AdIntel distributor data
 
 To run locally:
@@ -73,6 +73,66 @@ MEDIARADAR_FORMAT_MAP = {
         'Media Category': 'Digital',
         'Middle Media Category': 'Digital Email',
     },
+}
+
+# ========== MEDIARADAR MARKETS TO EXCLUDE ==========
+MEDIARADAR_EXCLUDED_MARKETS = {'International', 'Canada'}
+
+# ========== MEDIARADAR MARKET → NIELSEN NAME MAPPING ==========
+MEDIARADAR_MARKET_MAP = {
+    'US National':       'National',
+    'Los Angeles, CA':   'LOS ANGELES',
+    'Philadelphia, PA':  'PHILADELPHIA',
+    'New York, NY':      'NEW YORK',
+    'Dallas, TX':        'DALLAS-FT. WORTH',
+    'Miami, FL':         'MIAMI-FT. LAUDERDALE',
+    'Boston, MA':        'BOSTON (MANCHESTER)',
+    'Norfolk, VA':       'NORFOLK-PORTSMTH-NEWPT NWS',
+    'Chicago, IL':       'CHICAGO',
+    'West Palm Bch, FL': 'WEST PALM BEACH-FT. PIERCE',
+    'Des Moines, IA':    'DES MOINES-AMES',
+    'San Francisco, CA': 'SAN FRANCISCO-OAK-SAN JOSE',
+    'Houston, TX':       'HOUSTON',
+    'San Antonio, TX':   'SAN ANTONIO',
+    'Denver, CO':        'DENVER',
+    'Baltimore, MD':     'BALTIMORE',
+    'Seattle, WA':       'SEATTLE-TACOMA',
+    'Washington, DC':    'WASHINGTON DC (HAGRSTWN)',
+    'Austin, TX':        'AUSTIN',
+    'Atlanta, GA':       'ATLANTA',
+    'Orlando, FL':       'ORLANDO-DAYTONA BCH-MELBRN',
+    'Memphis, TN':       'MEMPHIS',
+    'Las Vegas, NV':     'LAS VEGAS',
+    'San Diego, CA':     'SAN DIEGO',
+    'Hartford, CT':      'HARTFORD & NEW HAVEN',
+    'Minneapolis, MN':   'MINNEAPOLIS-ST. PAUL',
+    'Phoenix, AZ':       'PHOENIX (PRESCOTT)',
+    'Pittsburgh, PA':    'PITTSBURGH',
+    'Sacramento, CA':    'SACRAMNTO-STKTON-MODESTO',
+    'Ft Myers, FL':      'FT. MYERS-NAPLES',
+    'Milwaukee, WI':     'MILWAUKEE',
+    'Honolulu, HI':      'HONOLULU',
+    'Juneau, AK':        'JUNEAU',
+    'Richmond, VA':      'RICHMOND-PETERSBURG',
+    'St Louis, MO':      'ST. LOUIS',
+    'Charleston, SC':    'CHARLESTON SC',
+    'Charlotte, NC':     'CHARLOTTE',
+    'Cleveland, OH':     'CLEVELAND-AKRON (CANTON)',
+    'Detroit, MI':       'DETROIT',
+    'Providence, RI':    'PROVIDENCE-NEW BEDFORD',
+    'Lincoln, NE':       'LINCOLN & HASTINGS-KRNY',
+    'Palm Springs, CA':  'PALM SPRINGS',
+    'Jackson, MS':       'JACKSON MS',
+    'Indianapolis, IN':  'INDIANAPOLIS',
+    'Louisville, KY':    'LOUISVILLE',
+    'Oklahoma City, OK': 'OKLAHOMA CITY',
+    'Portland, OR':      'PORTLAND OR',
+    'Salt Lake City, UT':'SALT LAKE CITY',
+    'Columbia, SC':      'COLUMBIA SC',
+    'Montgomery, AL':    'MONTGOMERY-SELMA',
+    'New Orleans, LA':   'NEW ORLEANS',
+    'Cincinnati, OH':    'CINCINNATI',
+    'Albuquerque, NM':   'ALBUQUERQUE-SANTA FE',
 }
 
 # ========== OPTIONAL COLUMNS (cross-source) ==========
@@ -377,12 +437,20 @@ def process_mediaradar(mr_df, date_col, detected_optionals, include_ad_size, adi
     if mr_df.empty:
         return pd.DataFrame(), 0, formats_excluded, 0
 
+    # ========== MARKET FILTERING & NIELSEN NORMALIZATION ==========
     market_excluded = 0
     if 'Market' in mr_df.columns:
         before = len(mr_df)
-        mr_df = mr_df[mr_df['Market'].str.strip() == 'US National']
+        # Exclude International and Canada; keep all other markets
+        mr_df = mr_df[~mr_df['Market'].str.strip().isin(MEDIARADAR_EXCLUDED_MARKETS)]
         market_excluded = before - len(mr_df)
-        mr_df['Market'] = 'National'
+        # Normalize to Nielsen naming; unmapped values pass through as-is
+        mr_df['Market'] = (
+            mr_df['Market']
+            .str.strip()
+            .map(MEDIARADAR_MARKET_MAP)
+            .fillna(mr_df['Market'].str.strip())
+        )
 
     if mr_df.empty:
         return pd.DataFrame(), 0, formats_excluded, market_excluded
@@ -679,7 +747,7 @@ Upload your files to automatically combine them.
   - *Excludes: Streaming, Twitch, Morningstar, Economist, Marketwatch, Investing.com, Investors.com, Zacks, TheAtlantic*
 - **Pathmatics** → Social media (FB, IG, TikTok, etc.) + OTT/CTV
   - *Includes: Desktop/Mobile Display/Video for financial publishers (Twitch, Morningstar, etc.)*
-- **MediaRadar** *(optional)* → Podcast, Email, Retail Media (Native) — US National only
+- **MediaRadar** *(optional)* → Podcast, Email, Retail Media (Native) — excludes International and Canada markets; all other markets normalized to Nielsen naming
 - No overlap between sources
 """)
 
@@ -695,7 +763,7 @@ with st.expander("📖 Column Requirements by Source"):
     | Distributor Description | `Distributor Description` | — (N/A) | `Media Property` |
     | Media Type | `Media Type` | `Channel` | `Format` |
     | Media Category | `Media Category` | — (auto: Digital) | — (auto-mapped) |
-    | Market | `Market` | — (auto: NATIONAL) | `Market` (US National only) |
+    | Market | `Market` | — (auto: NATIONAL) | `Market` (excl. International & Canada; Nielsen-normalized) |
     | Commercial Duration | `Commercial Duration` | `Duration` | — (N/A) |
     | Date | `Month` or `Week` | `Date` | Month columns (e.g., `Jan 2025`) |
     | Dollars | `Dollars` | `Spend (USD)` | Month columns (unpivoted) |
@@ -767,6 +835,32 @@ with st.expander("📋 Publisher Handling Rules"):
     - `investing.com`, `investors.com`, `zacks.com`, `theatlantic.com`
 
     *This ensures financial and gaming publishers have accurate coverage from the source with better tracking.*
+    """)
+
+with st.expander("🗺️ MediaRadar Market Rules"):
+    st.markdown("""
+    ### Excluded Markets
+    - `International`
+    - `Canada`
+
+    ### Nielsen Name Normalization
+    All remaining markets are renamed to match Nielsen DMA naming conventions.
+    Any market value not found in the mapping passes through as-is (so you'll see the raw
+    MediaRadar name as a signal that the mapping may need updating).
+
+    | MediaRadar | Nielsen |
+    |---|---|
+    | US National | National |
+    | New York, NY | NEW YORK |
+    | Los Angeles, CA | LOS ANGELES |
+    | Chicago, IL | CHICAGO |
+    | Philadelphia, PA | PHILADELPHIA |
+    | Dallas, TX | DALLAS-FT. WORTH |
+    | San Francisco, CA | SAN FRANCISCO-OAK-SAN JOSE |
+    | Washington, DC | WASHINGTON DC (HAGRSTWN) |
+    | Houston, TX | HOUSTON |
+    | Atlanta, GA | ATLANTA |
+    | *... and 41 more DMAs* | |
     """)
 
 # ========== FILE UPLOADERS ==========
@@ -876,7 +970,7 @@ if adintel_file and pathmatics_file:
                         if mr_df is not None:
                             st.write(f"**MediaRadar rows included:** {mr_count:,} (Podcast + Email + Retail Media)")
                             st.write(f"**MediaRadar format rows excluded:** {mr_fmt_excl:,} (formats already covered by AdIntel/Pathmatics)")
-                            st.write(f"**MediaRadar market rows excluded:** {mr_market_excl:,} (non-US National)")
+                            st.write(f"**MediaRadar market rows excluded:** {mr_market_excl:,} (International + Canada)")
                         if detected_opts:
                             st.write(f"**Optional cross-source columns included:** {', '.join(detected_opts)}")
                         if incl_ad_size:
@@ -921,5 +1015,5 @@ st.markdown("""
 |--------|--------|----------|
 | **AdIntel** | TV, Radio, Print, Outdoor, Digital Display, Digital Video, YouTube, Search | Streaming, Twitch, Morningstar, Economist, Marketwatch, Investing.com, Investors.com, Zacks, TheAtlantic |
 | **Pathmatics** | Social Media (FB, IG, TikTok, Snap, X, LinkedIn, Pinterest, Reddit) + OTT/CTV + Financial publishers | Desktop/Mobile Display/Video (except financial publishers) |
-| **MediaRadar** | Podcast → Audio, Email → Digital, Retail Media → Digital (Retail Media) | Non-US National markets |
+| **MediaRadar** | Podcast → Audio, Email → Digital, Retail Media → Digital (Retail Media) | International, Canada; all kept markets normalized to Nielsen DMA names |
 """)
