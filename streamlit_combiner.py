@@ -10,6 +10,7 @@ Methodology v5:
 - Pathmatics: Add only Social Media and OTT/CTV (exclude Desktop/Mobile Display/Video and YouTube)
   - EXCEPTION: Keep Desktop/Mobile Display/Video for financial publishers listed above
 - MediaRadar: Add only Podcast, Email, and Retail Media (Native) — excludes International and Canada markets
+  - Retail Media (Native): only kept if Detailed Property contains an approved retailer name
 - YouTube: Labeled separately as 'YouTube (digital video)' from AdIntel distributor data
 
 To run locally:
@@ -77,6 +78,20 @@ MEDIARADAR_FORMAT_MAP = {
 
 # ========== MEDIARADAR MARKETS TO EXCLUDE ==========
 MEDIARADAR_EXCLUDED_MARKETS = {'International', 'Canada'}
+
+# ========== RETAIL MEDIA ALLOWED PROPERTIES ==========
+# For Native (Retail Media) rows, only keep those whose Detailed Property contains
+# one of these retailer names (case-insensitive substring match).
+# e.g. "Amazon DSP" or "Walmart Connect" will still match.
+# Podcast and Email rows are completely unaffected by this filter.
+RETAIL_MEDIA_ALLOWED_PROPERTIES = {
+    'amazon', 'ebay', 'k-mart', 'kmart', 'wal-mart', 'walmart', 'target',
+    'kroger', 'kroger precision marketing', 'best buy', 'costco', 'costco wholesale',
+    "macy's", 'macys', 'the home depot', 'home depot', 'cvs', "kohl's", 'kohls',
+    'nordstrom', 'meijer', "sam's club", 'sams club', 'office depot',
+    'dollar general', 'walgreens', 'albertsons', 'safeway', 'wayfair',
+    'bed bath & beyond', 'overstock.com', 'overstock', 'buybuy baby', 'buybuybaby',
+}
 
 # ========== MEDIARADAR MARKET → NIELSEN NAME MAPPING ==========
 MEDIARADAR_MARKET_MAP = {
@@ -435,7 +450,30 @@ def process_mediaradar(mr_df, date_col, detected_optionals, include_ad_size, adi
     formats_excluded = before - len(mr_df)
 
     if mr_df.empty:
-        return pd.DataFrame(), 0, formats_excluded, 0
+        return pd.DataFrame(), 0, formats_excluded, 0, 0
+
+    # ========== RETAIL MEDIA PROPERTY FILTER ==========
+    # For Native (Retail Media) rows, only keep those whose Detailed Property
+    # contains one of the approved retailer names (case-insensitive substring match).
+    # Podcast and Email rows are completely unaffected.
+    retail_property_excluded = 0
+    if 'Detailed Property' in mr_df.columns:
+        retail_mask = mr_df['Format'] == 'Native'
+        detailed_lower = mr_df['Detailed Property'].astype(str).str.strip().str.lower()
+        allowed_retail_mask = detailed_lower.apply(
+            lambda v: any(r in v for r in RETAIL_MEDIA_ALLOWED_PROPERTIES)
+        )
+        before_retail = retail_mask.sum()
+        # Keep row if: not Retail Media, OR is Retail Media with an approved property
+        mr_df = mr_df[~retail_mask | allowed_retail_mask]
+        retail_property_excluded = before_retail - (retail_mask & allowed_retail_mask).sum()
+    else:
+        # No Detailed Property column — drop all Retail Media rows to be safe
+        retail_property_excluded = (mr_df['Format'] == 'Native').sum()
+        mr_df = mr_df[mr_df['Format'] != 'Native']
+
+    if mr_df.empty:
+        return pd.DataFrame(), 0, formats_excluded, 0, retail_property_excluded
 
     # ========== MARKET FILTERING & NIELSEN NORMALIZATION ==========
     market_excluded = 0
@@ -453,7 +491,7 @@ def process_mediaradar(mr_df, date_col, detected_optionals, include_ad_size, adi
         )
 
     if mr_df.empty:
-        return pd.DataFrame(), 0, formats_excluded, market_excluded
+        return pd.DataFrame(), 0, formats_excluded, market_excluded, retail_property_excluded
 
     non_month_cols = ['Parent', 'Product Line', 'Format', 'Detailed Property',
                       'Media Property', 'National/Local', 'Market']
@@ -472,7 +510,7 @@ def process_mediaradar(mr_df, date_col, detected_optionals, include_ad_size, adi
     mr_melted = mr_melted[mr_melted['Dollars'] != 0]
 
     if mr_melted.empty:
-        return pd.DataFrame(), 0, formats_excluded, market_excluded
+        return pd.DataFrame(), 0, formats_excluded, market_excluded, retail_property_excluded
 
     mr_melted[date_col] = pd.to_datetime(mr_melted['Month_Raw'], format='%b %Y', errors='coerce')
     if mr_melted[date_col].isna().all():
@@ -503,7 +541,7 @@ def process_mediaradar(mr_df, date_col, detected_optionals, include_ad_size, adi
     for col in adintel_only_detected:
         mr_melted[col] = 'N/A'
 
-    return mr_melted, len(mr_melted), formats_excluded, market_excluded
+    return mr_melted, len(mr_melted), formats_excluded, market_excluded, retail_property_excluded
 
 
 def process_files(adintel_df, pathmatics_df, version, mr_df=None):
@@ -708,8 +746,9 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
     mr_count = 0
     mr_formats_excluded = 0
     mr_market_excluded = 0
+    mr_retail_property_excluded = 0
     if mr_df is not None:
-        mr_processed, mr_count, mr_formats_excluded, mr_market_excluded = process_mediaradar(
+        mr_processed, mr_count, mr_formats_excluded, mr_market_excluded, mr_retail_property_excluded = process_mediaradar(
             mr_df, date_col, detected_optionals, include_ad_size, adintel_only_detected
         )
         if not mr_processed.empty:
@@ -732,7 +771,7 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
         streaming_removed, channels_removed, youtube_count,
         mr_count, mr_formats_excluded, detected_optionals, financial_removed,
         kept_publishers, footer_removed, mr_market_excluded,
-        include_ad_size, adintel_only_detected
+        include_ad_size, adintel_only_detected, mr_retail_property_excluded
     )
 
 
@@ -748,6 +787,7 @@ Upload your files to automatically combine them.
 - **Pathmatics** → Social media (FB, IG, TikTok, etc.) + OTT/CTV
   - *Includes: Desktop/Mobile Display/Video for financial publishers (Twitch, Morningstar, etc.)*
 - **MediaRadar** *(optional)* → Podcast, Email, Retail Media (Native) — excludes International and Canada markets; all other markets normalized to Nielsen naming
+  - *Retail Media: only kept if Detailed Property contains an approved major retailer (Amazon, Walmart, Target, etc.)*
 - No overlap between sources
 """)
 
@@ -863,6 +903,20 @@ with st.expander("🗺️ MediaRadar Market Rules"):
     | *... and 41 more DMAs* | |
     """)
 
+with st.expander("🛒 MediaRadar Retail Media Rules"):
+    st.markdown("""
+    ### Approved Retailers (Detailed Property must contain one of these — case-insensitive substring match)
+    Amazon, eBay, K-Mart / Kmart, Wal-Mart / Walmart, Target, Kroger, Kroger Precision Marketing,
+    Best Buy, Costco / Costco Wholesale, Macy's, The Home Depot / Home Depot, CVS, Kohl's,
+    Nordstrom, Meijer, Sam's Club, Office Depot, Dollar General, Walgreens, Albertsons,
+    Safeway, Wayfair, Bed Bath & Beyond, Overstock.com / Overstock, BuyBuy Baby
+
+    Rows where `Detailed Property` does not contain any of these names are excluded.
+    If the `Detailed Property` column is missing entirely, all Retail Media rows are dropped.
+
+    **Podcast and Email rows are not affected by this filter.**
+    """)
+
 # ========== FILE UPLOADERS ==========
 col1, col2, col3 = st.columns(3)
 
@@ -936,7 +990,7 @@ if adintel_file and pathmatics_file:
                             streaming_rm, channels_rm, yt_count,
                             mr_count, mr_fmt_excl, detected_opts, financial_rm,
                             kept_pubs, footer_rm, mr_market_excl,
-                            incl_ad_size, ai_only_detected
+                            incl_ad_size, ai_only_detected, mr_retail_prop_excl
                         ) = process_files(
                             adintel_df.copy(), pathmatics_df.copy(), version,
                             mr_df=mr_df.copy() if mr_df is not None else None
@@ -971,6 +1025,7 @@ if adintel_file and pathmatics_file:
                             st.write(f"**MediaRadar rows included:** {mr_count:,} (Podcast + Email + Retail Media)")
                             st.write(f"**MediaRadar format rows excluded:** {mr_fmt_excl:,} (formats already covered by AdIntel/Pathmatics)")
                             st.write(f"**MediaRadar market rows excluded:** {mr_market_excl:,} (International + Canada)")
+                            st.write(f"**MediaRadar Retail Media rows excluded (non-approved retailer):** {mr_retail_prop_excl:,}")
                         if detected_opts:
                             st.write(f"**Optional cross-source columns included:** {', '.join(detected_opts)}")
                         if incl_ad_size:
@@ -1015,5 +1070,5 @@ st.markdown("""
 |--------|--------|----------|
 | **AdIntel** | TV, Radio, Print, Outdoor, Digital Display, Digital Video, YouTube, Search | Streaming, Twitch, Morningstar, Economist, Marketwatch, Investing.com, Investors.com, Zacks, TheAtlantic |
 | **Pathmatics** | Social Media (FB, IG, TikTok, Snap, X, LinkedIn, Pinterest, Reddit) + OTT/CTV + Financial publishers | Desktop/Mobile Display/Video (except financial publishers) |
-| **MediaRadar** | Podcast → Audio, Email → Digital, Retail Media → Digital (Retail Media) | International, Canada; all kept markets normalized to Nielsen DMA names |
+| **MediaRadar** | Podcast → Audio, Email → Digital, Retail Media → Digital (approved retailers only) | International, Canada; non-approved Retail Media properties; all kept markets normalized to Nielsen DMA names |
 """)
