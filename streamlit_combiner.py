@@ -622,14 +622,16 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
 
     channels_removed = before_filter - len(pathmatics_df)
 
-    if 'Brand Leaf' in pathmatics_df.columns:
+# Brand columns — handle both 'Brand (Leaf)' and 'Brand Leaf' naming
+    if 'Brand (Leaf)' in pathmatics_df.columns:
+        pathmatics_df['Brand Variant'] = pathmatics_df['Brand (Leaf)']
+    elif 'Brand Leaf' in pathmatics_df.columns:
         pathmatics_df['Brand Variant'] = pathmatics_df['Brand Leaf']
     elif 'Brand Root' in pathmatics_df.columns:
         pathmatics_df['Brand Variant'] = pathmatics_df['Brand Root']
 
     if 'Brand Root' in pathmatics_df.columns:
         pathmatics_df['Subsidiary'] = pathmatics_df['Brand Root']
-
     if 'Advertiser' in pathmatics_df.columns:
         pathmatics_df['Parent'] = pathmatics_df['Advertiser']
 
