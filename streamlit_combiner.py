@@ -655,7 +655,9 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
     pathmatics_df['Date'] = pd.to_datetime(pathmatics_df['Date'], errors='coerce')
 
     if not is_weekly:
-        pathmatics_df['Date'] = pathmatics_df['Date'] + pd.Timedelta(days=6)
+        # Pathmatics broadcast-week exports show the week start date; use the next
+        # week anchor so cross-month weeks roll into the intended broadcast month.
+        pathmatics_df['Date'] = pathmatics_df['Date'] + pd.Timedelta(days=7)
         pathmatics_df['Date'] = pd.to_datetime(pathmatics_df['Date'].dt.strftime('%B %Y'), format='%B %Y')
 
     pathmatics_df['Media Category'] = 'Digital'
