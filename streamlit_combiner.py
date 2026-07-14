@@ -2,7 +2,7 @@
 Adintel + Pathmatics + MediaRadar Combiner - Streamlit App
 Deploy to Streamlit Cloud for free: https://streamlit.io/cloud
 
-Methodology v5:
+Methodology v5.2 (aligned with Flask local version):
 - AdIntel: Keep ALL data (traditional + digital display/video + YouTube + Search) EXCEPT:
   - Streaming (covered by Pathmatics OTT)
   - Financial publishers: Twitch, Morningstar, Economist, Marketwatch, Investing.com,
@@ -12,6 +12,18 @@ Methodology v5:
 - MediaRadar: Add only Podcast, Email, and Retail Media (Native) — excludes International and Canada markets
   - Retail Media (Native): only kept if Detailed Property contains an approved retailer name
 - YouTube: Labeled separately as 'YouTube (digital video)' from AdIntel distributor data
+
+v5.2 changes (parity with Flask local version):
+- Pathmatics broadcast-month shift corrected to +6 days (was +7; +7 misassigned
+  weeks when a month ends on a Sunday, e.g. week of Jan 25-31 rolled into February)
+- AdIntel footer removed explicitly (cut at first 'Copyright' row) instead of
+  relying on date-parse failures
+- AdIntel Month parsed with an explicit format list ('26-Apr', 'Apr-26', 'Apr 2026',
+  Excel serials, etc.) instead of bare auto-detect
+- AdIntel Dollars cleaned to numeric (strips $ and commas; handles trailing-space
+  'Dollars ' column)
+- Pathmatics missing 'Duration' column no longer crashes
+- low_memory=False on AdIntel CSV read; astype(str) guards on string filters
 
 To run locally:
     pip install streamlit pandas openpyxl
@@ -183,14 +195,31 @@ ADINTEL_ONLY_COLUMNS = [
     'Occurrence Indicator',
 ]
 
+NUMERIC_COLS = {'Dollars', 'Estimated Impressions', 'Clicks', 'CPC', 'CPC (x.xx)',
+                'CTR', 'CTR (x.xxx)', 'Avg Rank'}
+
 
 # ========== HELPER FUNCTIONS ==========
+
+def remove_adintel_footer(df):
+    """Cut at first 'Copyright' row in column A; drop fully blank trailing rows."""
+    if df.empty:
+        return df, 0
+    before = len(df)
+    first_col = df.iloc[:, 0].astype(str).str.strip()
+    copyright_mask = first_col.str.lower().str.startswith('copyright', na=False)
+    if copyright_mask.any():
+        cutoff_pos = copyright_mask.to_numpy().argmax()
+        df = df.iloc[:cutoff_pos].copy()
+    df = df.dropna(how='all').reset_index(drop=True)
+    return df, before - len(df)
+
 
 def detect_version(adintel_df):
     columns = [col.strip() for col in adintel_df.columns.tolist()]
     has_week = 'Week' in columns
     has_month = 'Month' in columns
-    has_impressions = 'ImpE_P18_99' in columns or 'IMP_P2_99' in columns
+    has_impressions = 'IMP_P2_99' in columns or 'ImpE_P18_99' in columns
 
     if has_week and has_impressions:
         return 'weekly_impressions', 'Weekly + Impressions'
@@ -204,12 +233,9 @@ def detect_version(adintel_df):
 
 
 def detect_adintel_brand_col(adintel_df):
-    if 'Brand Core' in adintel_df.columns:
-        return 'Brand Core'
-    elif 'Brand Variant' in adintel_df.columns:
-        return 'Brand Variant'
-    elif 'Brand' in adintel_df.columns:
-        return 'Brand'
+    for c in ('Brand Core', 'Brand Variant', 'Brand'):
+        if c in adintel_df.columns:
+            return c
     return None
 
 
@@ -245,11 +271,11 @@ def apply_device_remapping(adintel_df):
     if 'Device' not in adintel_df.columns:
         return adintel_df
 
-    mobile_mask = adintel_df['Device'].str.strip().str.lower() == 'mobile'
-    desktop_mask = adintel_df['Device'].str.strip().str.lower() == 'desktop'
+    mobile_mask = adintel_df['Device'].astype(str).str.strip().str.lower() == 'mobile'
+    desktop_mask = adintel_df['Device'].astype(str).str.strip().str.lower() == 'desktop'
 
     # Use substring matching to handle any spacing/formatting variation in Media Type
-    mt = adintel_df['Media Type'].str.strip().str.lower()
+    mt = adintel_df['Media Type'].astype(str).str.strip().str.lower()
     display_mask = mt.str.contains('digital', na=False) & mt.str.contains('display', na=False)
     video_mask = mt.str.contains('digital', na=False) & mt.str.contains('video', na=False)
 
@@ -259,6 +285,56 @@ def apply_device_remapping(adintel_df):
     adintel_df.loc[desktop_mask & video_mask, 'Media Type'] = 'Desktop Video'
 
     return adintel_df
+
+
+def parse_adintel_month(adintel_df):
+    """
+    AdIntel Month column comes in different formats. CSV exports use '26-Apr',
+    Excel exports often come as Excel-serial dates. Try common formats explicitly
+    (>80%% parse rate = winner), fall back to auto-detect.
+    Returns (df_with_parsed_month, unparseable_count, chosen_format, failed_examples).
+    """
+    raw_month = adintel_df['Month'].astype(str).str.strip()
+    formats_to_try = [
+        '%y-%b',         # 26-Apr   <-- AdIntel CSV format
+        '%y-%B',         # 26-April
+        '%b-%y',         # Apr-26
+        '%B-%y',         # April-26
+        '%b %Y',         # Apr 2026
+        '%B %Y',         # April 2026
+        '%m/%Y',         # 04/2026
+        '%Y-%m',         # 2026-04
+        '%Y-%m-%d',      # 2026-04-15
+        '%m/%d/%Y',      # 04/15/2026
+        '%Y/%m',         # 2026/04
+    ]
+    parsed = None
+    chosen_format = None
+    for fmt in formats_to_try:
+        attempt = pd.to_datetime(raw_month, format=fmt, errors='coerce')
+        if attempt.notna().sum() > len(raw_month) * 0.8:  # >80% parsed = winner
+            parsed = attempt
+            chosen_format = fmt
+            break
+    if parsed is None:
+        parsed = pd.to_datetime(raw_month, errors='coerce')
+        chosen_format = 'auto-detect'
+
+    adintel_df['Month'] = parsed
+    before = len(adintel_df)
+    failed_examples = raw_month[parsed.isna()].head(5).tolist()
+    adintel_df = adintel_df[adintel_df['Month'].notna()]
+    unparseable = before - len(adintel_df)
+    adintel_df['Month'] = adintel_df['Month'].apply(lambda x: x.replace(day=1) if pd.notnull(x) else x)
+    return adintel_df, unparseable, chosen_format, failed_examples
+
+
+def clean_dollars_numeric(series):
+    """Strip $ and commas, coerce to numeric."""
+    return pd.to_numeric(
+        series.astype(str).str.replace(r'[\$,]', '', regex=True),
+        errors='coerce'
+    )
 
 
 def check_column_warnings(adintel_df, pathmatics_df):
@@ -374,7 +450,6 @@ def group_media_type(media_type):
     digital_video = {'National Digital-Video', 'Local Digital-Video', 'Desktop Video', 'Mobile Video'}
     digital_display = {'National Digital-Display', 'Local Digital-Display', 'Desktop Display', 'Mobile Display'}
     digital_search = {'National Digital-Search', 'Local Digital-Search'}
-    audio = set()
 
     if mt in social:
         return 'Social Media'
@@ -388,8 +463,8 @@ def group_media_type(media_type):
         return 'Digital Display'
     elif mt in digital_search:
         return 'Digital Search'
-    elif mt in audio:
-        return 'Audio'
+    elif mt == 'YouTube (digital video)':
+        return 'YouTube (digital video)'
     elif mt == 'Email':
         return 'Digital Email'
     elif mt == 'Retail Media':
@@ -400,7 +475,7 @@ def group_media_type(media_type):
 def read_adintel(uploaded_file):
     filename = uploaded_file.name
     if filename.endswith('.csv'):
-        df = pd.read_csv(uploaded_file, skiprows=2)
+        df = pd.read_csv(uploaded_file, skiprows=2, low_memory=False)
     else:
         df = pd.read_excel(uploaded_file, sheet_name='Report', skiprows=3)
     df.columns = df.columns.str.strip()
@@ -444,7 +519,7 @@ def read_mediaradar(uploaded_file):
 
 
 def process_mediaradar(mr_df, date_col, detected_optionals, include_ad_size, adintel_only_detected):
-    mr_df['Format'] = mr_df['Format'].str.strip()
+    mr_df['Format'] = mr_df['Format'].astype(str).str.strip()
     before = len(mr_df)
     mr_df = mr_df[mr_df['Format'].isin(INCLUDED_MEDIARADAR_FORMATS)]
     formats_excluded = before - len(mr_df)
@@ -480,14 +555,14 @@ def process_mediaradar(mr_df, date_col, detected_optionals, include_ad_size, adi
     if 'Market' in mr_df.columns:
         before = len(mr_df)
         # Exclude International and Canada; keep all other markets
-        mr_df = mr_df[~mr_df['Market'].str.strip().isin(MEDIARADAR_EXCLUDED_MARKETS)]
+        mr_df = mr_df[~mr_df['Market'].astype(str).str.strip().isin(MEDIARADAR_EXCLUDED_MARKETS)]
         market_excluded = before - len(mr_df)
         # Normalize to Nielsen naming; unmapped values pass through as-is
         mr_df['Market'] = (
-            mr_df['Market']
+            mr_df['Market'].astype(str)
             .str.strip()
             .map(MEDIARADAR_MARKET_MAP)
-            .fillna(mr_df['Market'].str.strip())
+            .fillna(mr_df['Market'].astype(str).str.strip())
         )
 
     if mr_df.empty:
@@ -554,40 +629,40 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
     include_ad_size = detect_ad_size(adintel_df, pathmatics_df)
     adintel_only_detected = detect_adintel_only_columns(adintel_df)
 
+    # ========== ADINTEL FOOTER (cut at 'Copyright' row + blank rows) ==========
+    adintel_df, footer_removed = remove_adintel_footer(adintel_df)
+
     # ========== ADINTEL DATES ==========
-    footer_removed = 0
+    month_format = None
     if is_weekly:
-        adintel_df['Date'] = adintel_df['Week'].str.split(' - ').str[0]
+        adintel_df['Date'] = adintel_df['Week'].astype(str).str.split(' - ').str[0]
         adintel_df['Date'] = pd.to_datetime(adintel_df['Date'], format='%m/%d/%Y', errors='coerce')
         before_clean = len(adintel_df)
         adintel_df = adintel_df[adintel_df['Date'].notna()]
-        footer_removed = before_clean - len(adintel_df)
+        footer_removed += before_clean - len(adintel_df)
     else:
-        adintel_df['Month'] = pd.to_datetime(adintel_df['Month'], errors='coerce')
-        before_clean = len(adintel_df)
-        adintel_df = adintel_df[adintel_df['Month'].notna()]
-        footer_removed = before_clean - len(adintel_df)
-        adintel_df['Month'] = adintel_df['Month'].apply(lambda x: x.replace(day=1) if pd.notnull(x) else x)
+        adintel_df, unparseable, month_format, _failed = parse_adintel_month(adintel_df)
+        footer_removed += unparseable
 
     # Filter out Streaming
     streaming_removed = 0
     if 'Media Category' in adintel_df.columns:
         before = len(adintel_df)
-        adintel_df = adintel_df[adintel_df['Media Category'].str.strip().str.lower() != 'streaming']
+        adintel_df = adintel_df[adintel_df['Media Category'].astype(str).str.strip().str.lower() != 'streaming']
         streaming_removed = before - len(adintel_df)
 
     # Label YouTube distributors separately
     youtube_count = 0
     if 'Distributor' in adintel_df.columns:
-        youtube_mask = adintel_df['Distributor'].str.strip().str.lower().str.contains('youtube', na=False)
+        youtube_mask = adintel_df['Distributor'].astype(str).str.strip().str.lower().str.contains('youtube', na=False)
         adintel_df.loc[youtube_mask, 'Media Type'] = 'YouTube (digital video)'
-        youtube_count = youtube_mask.sum()
+        youtube_count = int(youtube_mask.sum())
 
     # Filter out financial publishers from AdIntel
     financial_removed = 0
     if 'Distributor' in adintel_df.columns:
         before = len(adintel_df)
-        exclude_mask = adintel_df['Distributor'].str.strip().str.upper().isin(ADINTEL_EXCLUDE_DISTRIBUTORS)
+        exclude_mask = adintel_df['Distributor'].astype(str).str.strip().str.upper().isin(ADINTEL_EXCLUDE_DISTRIBUTORS)
         adintel_df = adintel_df[~exclude_mask]
         financial_removed = before - len(adintel_df)
 
@@ -613,16 +688,16 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
     kept_publishers = 0
 
     if 'Publisher' in pathmatics_df.columns:
-        keep_publisher_mask = pathmatics_df['Publisher'].str.lower().str.strip().isin(PATHMATICS_KEEP_PUBLISHERS)
-        channel_exclude_mask = pathmatics_df['Channel'].str.strip().isin(EXCLUDED_PATHMATICS_CHANNELS)
+        keep_publisher_mask = pathmatics_df['Publisher'].astype(str).str.lower().str.strip().isin(PATHMATICS_KEEP_PUBLISHERS)
+        channel_exclude_mask = pathmatics_df['Channel'].astype(str).str.strip().isin(EXCLUDED_PATHMATICS_CHANNELS)
         pathmatics_df = pathmatics_df[~channel_exclude_mask | keep_publisher_mask]
-        kept_publishers = keep_publisher_mask.sum()
+        kept_publishers = int(keep_publisher_mask.sum())
     else:
-        pathmatics_df = pathmatics_df[~pathmatics_df['Channel'].str.strip().isin(EXCLUDED_PATHMATICS_CHANNELS)]
+        pathmatics_df = pathmatics_df[~pathmatics_df['Channel'].astype(str).str.strip().isin(EXCLUDED_PATHMATICS_CHANNELS)]
 
     channels_removed = before_filter - len(pathmatics_df)
 
-# Brand columns — handle both 'Brand (Leaf)' and 'Brand Leaf' naming
+    # Brand columns — handle both 'Brand (Leaf)' and 'Brand Leaf' naming
     if 'Brand (Leaf)' in pathmatics_df.columns:
         pathmatics_df['Brand Variant'] = pathmatics_df['Brand (Leaf)']
     elif 'Brand Leaf' in pathmatics_df.columns:
@@ -655,16 +730,22 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
     pathmatics_df['Date'] = pd.to_datetime(pathmatics_df['Date'], errors='coerce')
 
     if not is_weekly:
-        # Pathmatics broadcast-week exports show the week start date; use the next
-        # week anchor so cross-month weeks roll into the intended broadcast month.
-        pathmatics_df['Date'] = pathmatics_df['Date'] + pd.Timedelta(days=7)
+        # Pathmatics broadcast-week exports show the week start date (Monday).
+        # +6 lands on the SUNDAY of the same broadcast week, so cross-month weeks
+        # roll into the broadcast month they belong to. (+7 was wrong: when a
+        # month ends on a Sunday — e.g. week of Jan 25-31 — +7 lands on the 1st
+        # of the NEXT month and misassigns that week.)
+        pathmatics_df['Date'] = pathmatics_df['Date'] + pd.Timedelta(days=6)
         pathmatics_df['Date'] = pd.to_datetime(pathmatics_df['Date'].dt.strftime('%B %Y'), format='%B %Y')
 
     pathmatics_df['Media Category'] = 'Digital'
     pathmatics_df['Market'] = 'NATIONAL'
     pathmatics_df['Source'] = 'Pathmatics'
     pathmatics_df['Distributor Description'] = 'N/A'
-    pathmatics_df['Duration'] = pathmatics_df['Duration'].fillna('N/A')
+    if 'Duration' in pathmatics_df.columns:
+        pathmatics_df['Duration'] = pathmatics_df['Duration'].fillna('N/A')
+    else:
+        pathmatics_df['Duration'] = 'N/A'
 
     if 'Impressions' not in pathmatics_df.columns:
         pathmatics_df['Impressions'] = 0
@@ -696,8 +777,15 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
     if rename_map:
         adintel_df.rename(columns=rename_map, inplace=True)
 
+    # AdIntel Dollars: clean to numeric (strips $ and commas); handles the
+    # trailing-space 'Dollars ' column some exports produce.
+    if 'Dollars' in adintel_df.columns:
+        adintel_df['Dollars'] = clean_dollars_numeric(adintel_df['Dollars'])
+    if 'Dollars ' in adintel_df.columns:
+        adintel_df['Dollars'] = clean_dollars_numeric(adintel_df['Dollars '])
+
     # ========== DETERMINE IF PARENT COLUMN NEEDED ==========
-    include_parent = has_adintel_parent or (mr_df is not None) or ('Advertiser' in pathmatics_df.columns)
+    include_parent = has_adintel_parent or (mr_df is not None) or ('Parent' in pathmatics_df.columns)
 
     # ========== BUILD COLUMN LIST ==========
     base_columns = [
@@ -742,7 +830,6 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
 
     pathmatics_selected = pathmatics_df[base_columns]
     adintel_selected = adintel_df[base_columns]
-    adintel_selected = adintel_selected.rename(columns={'Dollars ': 'Dollars'})
 
     frames = [pathmatics_selected, adintel_selected]
 
@@ -763,7 +850,6 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
 
     combined_df = pd.concat(frames, ignore_index=True)
 
-    NUMERIC_COLS = {'Dollars', 'Estimated Impressions', 'Clicks', 'CPC', 'CPC (x.xx)', 'CTR', 'CTR (x.xxx)', 'Avg Rank'}
     for col in combined_df.columns:
         if col != date_col and col not in NUMERIC_COLS:
             combined_df[col] = combined_df[col].fillna('N/A')
@@ -775,7 +861,8 @@ def process_files(adintel_df, pathmatics_df, version, mr_df=None):
         streaming_removed, channels_removed, youtube_count,
         mr_count, mr_formats_excluded, detected_optionals, financial_removed,
         kept_publishers, footer_removed, mr_market_excluded,
-        include_ad_size, adintel_only_detected, mr_retail_property_excluded
+        include_ad_size, adintel_only_detected, mr_retail_property_excluded,
+        month_format
     )
 
 
@@ -785,7 +872,7 @@ st.title("📊 Adintel + Pathmatics + MediaRadar Combiner")
 st.markdown("""
 Upload your files to automatically combine them.
 
-**Methodology v5:**
+**Methodology v5.2:**
 - **AdIntel** → All traditional media + digital display/video + YouTube + Search
   - *Excludes: Streaming, Twitch, Morningstar, Economist, Marketwatch, Investing.com, Investors.com, Zacks, TheAtlantic*
 - **Pathmatics** → Social media (FB, IG, TikTok, etc.) + OTT/CTV
@@ -994,7 +1081,8 @@ if adintel_file and pathmatics_file:
                             streaming_rm, channels_rm, yt_count,
                             mr_count, mr_fmt_excl, detected_opts, financial_rm,
                             kept_pubs, footer_rm, mr_market_excl,
-                            incl_ad_size, ai_only_detected, mr_retail_prop_excl
+                            incl_ad_size, ai_only_detected, mr_retail_prop_excl,
+                            month_fmt
                         ) = process_files(
                             adintel_df.copy(), pathmatics_df.copy(), version,
                             mr_df=mr_df.copy() if mr_df is not None else None
@@ -1018,7 +1106,9 @@ if adintel_file and pathmatics_file:
                             st.metric("Combined Total", f"{len(combined_df):,}")
 
                     with st.expander("📋 Processing Details"):
-                        st.write(f"**AdIntel footer/metadata rows removed:** {footer_rm:,}")
+                        st.write(f"**AdIntel footer/metadata/unparseable rows removed:** {footer_rm:,}")
+                        if month_fmt:
+                            st.write(f"**AdIntel Month parsed using format:** `{month_fmt}`")
                         st.write(f"**AdIntel Streaming rows removed:** {streaming_rm:,} (covered by Pathmatics OTT)")
                         st.write(f"**AdIntel financial publisher rows removed:** {financial_rm:,} (Twitch, Morningstar, etc.)")
                         st.write(f"**AdIntel YouTube rows relabeled:** {yt_count:,} → 'YouTube (digital video)'")
@@ -1068,7 +1158,7 @@ else:
 
 st.markdown("---")
 st.markdown("""
-*Methodology v5 — Auto-detects Weekly/Monthly, Impressions, Brand column, Parent column, optional cross-source columns, Ad Size, and AdIntel-only Search columns*
+*Methodology v5.2 — Auto-detects Weekly/Monthly, Impressions, Brand column, Parent column, optional cross-source columns, Ad Size, and AdIntel-only Search columns. Aligned with Flask local version (broadcast-month +6 shift, footer removal, Month format detection, Dollars cleaning).*
 
 | Source | Covers | Excludes |
 |--------|--------|----------|
