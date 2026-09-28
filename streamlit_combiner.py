@@ -913,7 +913,6 @@ with st.expander("📖 Column Requirements by Source"):
     |---|---|---|---|
     | Ad Buy Type | `Buy Type` | `Ad Buy Type` | — |
     | Landing Page URL | `Landing Page URL` | `Landing Page` | — |
-    | Landing Page | — | `Landing Page` | — |
     | Ad Service Type | `Ad Service Type` | `Purchase Channel Type` | — |
     | Creative Type | `Ad SubType` | `Creative Type` | — |
     | First Seen | `First Appear Date` | `First Seen` | — |
@@ -923,6 +922,7 @@ with st.expander("📖 Column Requirements by Source"):
     | Daypart | `Daypart` | — (N/A) | — (N/A) |
     | Device (Adintel) | `Device` | — | — |
     | Placement (Pathmatics) | — | `Placement` | — |
+    | Link To Creative | — | `Link To Creative` | — |
     | Program Name | `Program Name` | — | — |
     | Program Genre | `Program Genre` | — | — |
 
