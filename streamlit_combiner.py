@@ -178,6 +178,7 @@ OPTIONAL_COLUMNS = [
     ('Link To Creative',            None,                   'Link To Creative',         None),
     ('Program Name',                'Program Name',         None,                       None),
     ('Program Genre',               'Program Genre',        None,                       None),
+    ('Display Type', 'Display Type', None, None),
 ]
 
 # ========== ADINTEL-ONLY COLUMNS ==========
@@ -194,6 +195,7 @@ ADINTEL_ONLY_COLUMNS = [
     'Search Keyword',
     'Search Keyword Group',
     'Occurrence Indicator',
+    'Display Type',
 ]
 
 NUMERIC_COLS = {'Dollars', 'Estimated Impressions', 'Clicks', 'CPC', 'CPC (x.xx)',
@@ -899,6 +901,7 @@ with st.expander("📖 Column Requirements by Source"):
     | Commercial Duration | `Commercial Duration` | `Duration` | — (N/A) |
     | Date | `Month` or `Week` | `Date` | Month columns (e.g., `Jan 2025`) |
     | Dollars | `Dollars` | `Spend (USD)` | Month columns (unpivoted) |
+    |Display Type|'Display Type'|
 
     ### Conditional Columns (appear when detected)
 
